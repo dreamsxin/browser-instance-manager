@@ -1,6 +1,7 @@
 import BrowserManager from '../core/BrowserManager.js';
 import { getPreset } from '../config/presets.js';
 import { createLogger } from '../utils/logger.js';
+import { safeMainModuleCheck } from '../utils/platform.js';
 
 const logger = createLogger({ level: 'info' });
 
@@ -217,12 +218,13 @@ async function runAllExamples() {
 }
 
 // 如果直接运行此文件，则执行示例
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (safeMainModuleCheck(import.meta.url)) {
   runAllExamples().catch(error => {
     logger.error('示例执行失败:', error);
     process.exit(1);
   });
 }
+
 
 export {
   basicUsage,

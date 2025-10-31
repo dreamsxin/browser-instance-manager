@@ -13,7 +13,7 @@ export const LOG_LEVELS = {
 
 export class Logger {
   constructor(options = {}) {
-    this.level = options.level || LOG_LEVELS.INFO;
+    this.level = options.level || LOG_LEVELS.DEBUG;
     this.logToFile = options.logToFile || false;
     this.logFilePath = options.logFilePath || './logs/browser-manager.log';
     this.stream = null;

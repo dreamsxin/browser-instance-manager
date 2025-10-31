@@ -18,10 +18,10 @@ export class BrowserFactory {
     if (!browser) {
       throw new ValidationError(`Unsupported browser type: ${browserType}`);
     }
-
+    console.log(options);
     const browserOptions = {
       ...DEFAULT_BROWSER_OPTIONS[browserType],
-      ...options
+      ...options.options
     };
 
     this.logger.debug(`Creating browser: ${browserType}`, browserOptions);

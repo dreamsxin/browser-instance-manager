@@ -31,7 +31,7 @@ export class BaseMode {
 
   validateOptions(options) {
     const required = this.getRequiredOptions();
-    const missing = required.filter(key => !options[key]);
+    const missing = required.filter(key => options[key] == null);
     
     if (missing.length > 0) {
       throw new Error(`Missing required options: ${missing.join(', ')}`);

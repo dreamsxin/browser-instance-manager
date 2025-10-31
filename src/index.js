@@ -8,7 +8,7 @@ import {
 } from './utils/errors.js';
 import { 
   createLogger, 
-  metricsCollector 
+  MetricsCollector 
 } from './utils/index.js';
 
 // 导出主要类
@@ -25,7 +25,7 @@ export {
   ConnectionError,
   TimeoutError,
   createLogger,
-  metricsCollector
+  MetricsCollector
 };
 
 // 默认导出 BrowserManager

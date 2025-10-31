@@ -5,7 +5,8 @@ import { InstancePool } from './InstancePool.js';
 import { HealthMonitor } from './HealthMonitor.js';
 import { createLogger } from '../utils/logger.js';
 import { BrowserInstanceError, ValidationError } from '../utils/errors.js';
-import { DEFAULT_CONFIG, MODES, BROWSER_TYPES } from '../utils/constants.js';
+import { MODES } from '../utils/constants.js';
+import { DEFAULT_CONFIG } from '../config/defaultConfig.js';
 
 export class BrowserManager extends EventEmitter {
   constructor(config = {}) {
@@ -97,9 +98,9 @@ export class BrowserManager extends EventEmitter {
     
     switch (mode) {
       case MODES.LAUNCH:
-        return new LaunchMode(browser, options);
+        return new LaunchMode(browser, options.options);
       case MODES.LAUNCH_SERVER:
-        return new LaunchServerMode(browser, options);
+        return new LaunchServerMode(browser, options.options);
       default:
         throw new ValidationError(`Unsupported mode: ${mode}`);
     }
