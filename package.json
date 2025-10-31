@@ -1,0 +1,53 @@
+{
+  "name": "browser-instance-manager",
+  "version": "1.0.0",
+  "description": "Playwright browser instance manager with launch and launchServer modes",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest",
+    "test:unit": "jest tests/unit",
+    "test:integration": "jest tests/integration",
+    "test:coverage": "jest --coverage",
+    "benchmark": "node scripts/benchmark.js",
+    "cleanup": "node scripts/cleanup.js",
+    "health-check": "node scripts/health-check.js",
+    "lint": "eslint src/ tests/",
+    "build": "node scripts/build.js",
+    "example:basic": "node src/examples/basic-usage.js",
+    "example:performance": "node src/examples/performance-test.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "ws": "^8.14.0",
+    "dotenv": "^16.3.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.1",
+    "eslint": "^8.52.0",
+    "@types/node": "^20.8.0"
+  },
+  "keywords": [
+    "playwright",
+    "browser",
+    "instance",
+    "management",
+    "launch",
+    "launchServer",
+    "automation",
+    "scraping",
+    "testing"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "your-repo-url"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
