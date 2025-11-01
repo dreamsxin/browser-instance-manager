@@ -975,7 +975,13 @@ class FixedKeepAliveGoogleSearchService {
     if (this.browser) {
       await this.browser.close();
     }
-
+    // 清除所有页面代理
+    for (const proxyUrl of this.pageProxy.values()) {
+      if (proxyUrl) {
+        await proxyChain.closeAnonymizedProxy(proxyUrl, true);
+      }
+    }
+    this.pageProxy.clear();
     console.log("✅ 搜索服务已关闭");
   }
 }
