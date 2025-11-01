@@ -8,6 +8,7 @@ class FixedKeepAliveGoogleSearchService {
   constructor() {
     this.browser = null;
     this.pagePool = [];
+    this.pageProxy = new Map();
     this.pageStatus = new Map(); // 'idle' | 'busy' | 'keepalive'
     this.taskQueue = [];
     this.wsServer = null;
@@ -581,10 +582,15 @@ class FixedKeepAliveGoogleSearchService {
 
       console.log("📄 创建页面池...");
       for (let i = 0; i < this.maxPages; i++) {
+        const oldProxyUrl = "http://127.0.0.1:7890";
+        const newProxyUrl = await proxyChain.anonymizeProxy(oldProxyUrl);
+
+        // Prints something like "http://127.0.0.1:45678"
+        console.log(newProxyUrl);
         const context = await this.browser.newContext({
-          proxy: {
-            // server: "http://127.0.0.1:7890",
-          },
+          proxy: newProxyUrl ? {
+            server: newProxyUrl,
+          } : undefined,
         });
 
         // 屏蔽自动化特征
@@ -603,6 +609,7 @@ class FixedKeepAliveGoogleSearchService {
 
         this.pagePool.push(page);
         this.pageStatus.set(page, "idle");
+        this.pageProxy.set(page, newProxyUrl);
 
         console.log(`✅ 页面 ${i + 1}/${this.maxPages} 初始化完成`);
       }
@@ -976,43 +983,6 @@ class FixedKeepAliveGoogleSearchService {
 // 启动服务
 async function startService() {
 
-  const proxyList = {
-      'proxy1': 'http://username:password@proxy1.example.com:3128',
-      'proxy2': 'http://username:password@proxy2.example.com:3128',
-      'proxy3': 'http://username:password@proxy3.example.com:3128',
-  };
-  const server = new ProxyChain.Server({
-      port: 8000,
-      host: 'localhost',
-      verbose: true,
-      prepareRequestFunction: ({ request, username, password, hostname, port, isHttp, connectionId }) => {
-
-          const proxyUrl = proxyList[username];
-          return {
-              requestAuthentication: username !== 'bob' || password !== 'TopSecret',
-              upstreamProxyUrl: proxyUrl,
-              ignoreUpstreamProxyCertificate: true,
-              failMsg: 'Bad username or password, please try again.',
-              customTag: { userId: '123' },
-          };
-      },
-  });
-
-  server.listen(() => {
-    console.log(`Proxy server is listening on port ${server.port}`);
-  });
-
-  // Emitted when HTTP connection is closed
-  server.on('connectionClosed', ({ connectionId, stats }) => {
-    console.log(`Connection ${connectionId} closed`);
-    console.dir(stats);
-  });
-
-  // Emitted when HTTP request fails
-  server.on('requestFailed', ({ request, error }) => {
-    console.log(`Request ${request.url} failed`);
-    console.error(error);
-  });
   const searchService = new FixedKeepAliveGoogleSearchService();
 
   try {
