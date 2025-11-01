@@ -1,0 +1,31 @@
+{
+  "name": "google-search-service-immediate",
+  "version": "3.1.0",
+  "description": "立即保活版谷歌搜索服务节点 - 服务启动时立即执行保活操作",
+  "main": "search-service-fixed.js",
+  "scripts": {
+    "start": "node search-service-fixed.js",
+    "monitor": "node complete-client.js",
+    "test": "node complete-client.js",
+    "dev": "nodemon search-service-fixed.js"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0",
+    "ws": "^8.14.0",
+    "uuid": "^9.0.1",
+    "@faker-js/faker": "^8.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "playwright",
+    "websocket",
+    "google-search",
+    "nodejs",
+    "keepalive",
+    "immediate"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}

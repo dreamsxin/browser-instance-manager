@@ -9,7 +9,7 @@ const humanDelay = async (min = 1000, max = 3000) => {
 
 (async () => {
   const browser = await chromium.launch({
-    executablePath: "E:\\soft\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\chrome.exe",
+    executablePath: "E:\\soft\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\chrome.exe",
     headless: false, // 设置为true则不显示浏览器
     slowMo: 300, // 减慢操作速度
   });
@@ -32,7 +32,7 @@ const humanDelay = async (min = 1000, max = 3000) => {
     console.log('访问Google');
     // 访问Google
     page.goto('https://www.google.com');
-    
+
     console.log('需要添加等待确保页面加载完成');
     // 需要添加等待确保页面加载完成
     await page.waitForLoadState('domcontentloaded');
@@ -44,7 +44,7 @@ const humanDelay = async (min = 1000, max = 3000) => {
     const keyword = 'Playwright自动化测试';
     //await typeWithRandomSpeed('//*[@id="APjFqb"]', keyword);
     await typeWithRandomSpeed('//form//textarea', keyword);
-    
+
     await humanDelay(500, 1500);
 
     console.log('随机移动鼠标');
