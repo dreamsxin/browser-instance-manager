@@ -270,7 +270,6 @@ class FixedKeepAliveGoogleSearchService {
       // 随机点击搜索结果 - 修复新页面问题
       const links = await page.$$("a h3");
       if (links.length > 0 && Math.random() > 0.3) {
-
         try {
           const randomIndex = Math.floor(Math.random() * links.length);
           const randomLink = links[randomIndex];
@@ -581,7 +580,11 @@ class FixedKeepAliveGoogleSearchService {
 
       console.log("📄 创建页面池...");
       for (let i = 0; i < this.maxPages; i++) {
-        const context = await this.browser.newContext();
+        const context = await this.browser.newContext({
+          proxy: {
+            // server: "http://127.0.0.1:7890",
+          },
+        });
 
         // 屏蔽自动化特征
         // await context.addInitScript(() => {
@@ -833,7 +836,6 @@ class FixedKeepAliveGoogleSearchService {
       // 随机点击搜索结果 - 修复新页面问题
       const links = await page.$$("a h3");
       if (links.length > 0 && Math.random() > 0.3) {
-
         try {
           const randomIndex = Math.floor(Math.random() * links.length);
           const randomLink = links[randomIndex];
