@@ -2,6 +2,7 @@ const { chromium } = require("playwright");
 const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid");
 const { faker } = require("@faker-js/faker");
+const ProxyChain = require('proxy-chain');
 
 class FixedKeepAliveGoogleSearchService {
   constructor() {
@@ -974,6 +975,44 @@ class FixedKeepAliveGoogleSearchService {
 
 // 启动服务
 async function startService() {
+
+  const proxyList = {
+      'proxy1': 'http://username:password@proxy1.example.com:3128',
+      'proxy2': 'http://username:password@proxy2.example.com:3128',
+      'proxy3': 'http://username:password@proxy3.example.com:3128',
+  };
+  const server = new ProxyChain.Server({
+      port: 8000,
+      host: 'localhost',
+      verbose: true,
+      prepareRequestFunction: ({ request, username, password, hostname, port, isHttp, connectionId }) => {
+
+          const proxyUrl = proxyList[username];
+          return {
+              requestAuthentication: username !== 'bob' || password !== 'TopSecret',
+              upstreamProxyUrl: proxyUrl,
+              ignoreUpstreamProxyCertificate: true,
+              failMsg: 'Bad username or password, please try again.',
+              customTag: { userId: '123' },
+          };
+      },
+  });
+
+  server.listen(() => {
+    console.log(`Proxy server is listening on port ${server.port}`);
+  });
+
+  // Emitted when HTTP connection is closed
+  server.on('connectionClosed', ({ connectionId, stats }) => {
+    console.log(`Connection ${connectionId} closed`);
+    console.dir(stats);
+  });
+
+  // Emitted when HTTP request fails
+  server.on('requestFailed', ({ request, error }) => {
+    console.log(`Request ${request.url} failed`);
+    console.error(error);
+  });
   const searchService = new FixedKeepAliveGoogleSearchService();
 
   try {
