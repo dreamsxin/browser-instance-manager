@@ -576,6 +576,8 @@ class FixedKeepAliveGoogleSearchService {
         args: [
           //   '--no-sandbox',
           //   '--disable-setuid-sandbox',
+          "--window-size=1920,1080", // 无头模式时，设置浏览器窗口大小
+          "--headless=new", // 启用新的headless模式
           "--no-first-run", // 禁用首次运行提示
           "--no-default-browser-check", // 禁用默认浏览器检查
           "--disable-default-apps", // 禁用默认应用
