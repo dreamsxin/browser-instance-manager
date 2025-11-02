@@ -599,6 +599,7 @@ class FixedKeepAliveGoogleSearchService {
         // Prints something like "http://127.0.0.1:45678"
         console.log(newProxyUrl);
         const context = await this.browser.newContext({
+          viewport: null,
           proxy: newProxyUrl
             ? {
                 server: newProxyUrl,
