@@ -2,7 +2,7 @@ const { chromium } = require("playwright");
 const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid");
 const { faker } = require("@faker-js/faker");
-const ProxyChain = require('proxy-chain');
+const ProxyChain = require("proxy-chain");
 
 class FixedKeepAliveGoogleSearchService {
   constructor() {
@@ -576,7 +576,16 @@ class FixedKeepAliveGoogleSearchService {
         args: [
           //   '--no-sandbox',
           //   '--disable-setuid-sandbox',
+          "--no-first-run", // 禁用首次运行提示
+          "--no-default-browser-check", // 禁用默认浏览器检查
+          "--disable-default-apps", // 禁用默认应用
           "--disable-blink-features=AutomationControlled",
+          "--disable-background-timer-throttling", // 禁用定时器节流
+          "--disable-backgrounding-occluded-windows", // 禁用窗口遮挡
+          "--disable-renderer-backgrounding", // 禁用渲染器后台
+          "--disable-features=VizDisplayCompositor", // 禁用VizDisplayCompositor
+          "--disable-accelerated-2d-canvas", // 禁用2D加速画布
+          "--disable-gpu", // 禁用GPU加速
         ],
       });
 
@@ -588,9 +597,11 @@ class FixedKeepAliveGoogleSearchService {
         // Prints something like "http://127.0.0.1:45678"
         console.log(newProxyUrl);
         const context = await this.browser.newContext({
-          proxy: newProxyUrl ? {
-            server: newProxyUrl,
-          } : undefined,
+          proxy: newProxyUrl
+            ? {
+                server: newProxyUrl,
+              }
+            : undefined,
         });
 
         // 屏蔽自动化特征
@@ -988,7 +999,6 @@ class FixedKeepAliveGoogleSearchService {
 
 // 启动服务
 async function startService() {
-
   const searchService = new FixedKeepAliveGoogleSearchService();
 
   try {
