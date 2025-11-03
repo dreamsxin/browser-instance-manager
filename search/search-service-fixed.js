@@ -9,7 +9,7 @@ const path = require('path');
 class FixedKeepAliveGoogleSearchService {
   constructor(port = 8080) {
     this.browsers = [];
-    this.browserNum = 3;
+    this.browserNum = 2;
     this.pagePool = [];
     this.pageProxy = new Map();
     this.pageStatus = new Map(); // 'idle' | 'busy' | 'keepalive'
@@ -17,7 +17,7 @@ class FixedKeepAliveGoogleSearchService {
     this.taskQueue = [];
     this.wsServer = null;
     this.wsPort = port;
-    this.maxPages = 6;
+    this.maxPages = 10;
     this.isInitialized = false;
     this.keepAliveIntervals = new Map();
     this.clients = new Set();
@@ -196,7 +196,7 @@ class FixedKeepAliveGoogleSearchService {
 
     // 获取上下文和原始页面列表
     const context = page.context();
-    const originalPages = context.pages();
+    //const originalPages = context.pages();
 
     try {
       console.log(`\n🚀 开始执行页面 ${pageIndex + 1} 的保活操作`);
@@ -210,10 +210,18 @@ class FixedKeepAliveGoogleSearchService {
       });
 
       // 访问Google
-      await page.goto("https://www.google.com", {
-        waitUntil: "domcontentloaded",
-        timeout: 10000,
-      });
+      const currentUrl = await page.url();
+      // 判断是否是谷歌搜索结果页
+      if (currentUrl.includes("google.com/search")) {
+        console.log(`✅ 新页面是谷歌搜索结果页`);
+      } else {
+        console.log(`⚠️ 新页面不是谷歌搜索结果页`);
+        // 访问Google
+        await page.goto("https://www.google.com", {
+          waitUntil: "domcontentloaded",
+          timeout: 30000,
+        });
+      }
 
       console.log(`📄 页面 ${pageIndex + 1}: 等待页面加载完成`);
       await this.humanDelay(500, 1000);
@@ -336,40 +344,46 @@ class FixedKeepAliveGoogleSearchService {
           const newPage = await newPagePromise;
 
           if (newPage) {
-            console.log(
-              `🆕 页面 ${pageIndex + 1}: 检测到新页面打开，等待加载...`
-            );
-            executionDetails.clickedResult = true;
-            executionDetails.openedNewPages = 1;
-
-            // 等待新页面加载
-            await newPage.waitForLoadState("domcontentloaded");
-            await this.humanDelay(2000, 4000);
-
-            // 在新页面中执行一些随机操作
-            console.log(`🔍 页面 ${pageIndex + 1}: 在新页面中浏览`);
-            await newPage.evaluate(async () => {
-              // 随机滚动新页面
-              const scrollHeight = document.body.scrollHeight;
-              const viewportHeight = window.innerHeight;
-              const maxScroll = Math.max(0, scrollHeight - viewportHeight);
-              const scrollTo = Math.random() * maxScroll;
-              window.scrollTo(0, scrollTo);
-              await new Promise((resolve) => setTimeout(resolve, 1000));
-            });
-
-            await this.humanDelay(1000, 2000);
-
-            // 关闭新页面
-            console.log(`❌ 页面 ${pageIndex + 1}: 关闭新打开的页面`);
-            await newPage.close();
-
-            // 确保我们仍然在原始页面
-            if (page.isClosed()) {
+            try {
               console.log(
-                `⚠️ 页面 ${pageIndex + 1}: 原始页面已关闭，需要重新创建`
+                `🆕 页面 ${pageIndex + 1}: 检测到新页面打开，等待加载...`
               );
-              throw new Error("原始页面在点击后关闭");
+              executionDetails.clickedResult = true;
+              executionDetails.openedNewPages = 1;
+
+              // 等待新页面加载
+              await newPage.waitForLoadState("domcontentloaded");
+              await this.humanDelay(2000, 4000);
+
+              // 在新页面中执行一些随机操作
+              console.log(`🔍 页面 ${pageIndex + 1}: 在新页面中浏览`);
+              await newPage.evaluate(async () => {
+                // 随机滚动新页面
+                const scrollHeight = document.body.scrollHeight;
+                const viewportHeight = window.innerHeight;
+                const maxScroll = Math.max(0, scrollHeight - viewportHeight);
+                const scrollTo = Math.random() * maxScroll;
+                window.scrollTo(0, scrollTo);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+              });
+
+              await this.humanDelay(1000, 2000);
+
+              // 关闭新页面
+              console.log(`❌ 页面 ${pageIndex + 1}: 关闭新打开的页面`);
+              await newPage.close();
+
+              // 确保我们仍然在原始页面
+              if (page.isClosed()) {
+                console.log(
+                  `⚠️ 页面 ${pageIndex + 1}: 原始页面已关闭，需要重新创建`
+                );
+                throw new Error("原始页面在点击后关闭");
+              }
+            } catch (error) {
+              console.error(`❌ 页面 ${pageIndex + 1}: 关闭新页面时出错:`, error);
+            } finally {
+              newPage.close();
             }
           } else {
             // 没有新页面打开，在当前页面导航
@@ -416,13 +430,13 @@ class FixedKeepAliveGoogleSearchService {
 
       // 保活失败时尝试恢复页面状态
       try {
-        // 确保关闭所有可能打开的新页面
-        const closedCount = await this.closeNewPages(context, originalPages);
-        if (closedCount > 0) {
-          console.log(
-            `✅ 页面 ${pageIndex + 1}: 已关闭 ${closedCount} 个新页面`
-          );
-        }
+        // // 确保关闭所有可能打开的新页面
+        // const closedCount = await this.closeNewPages(context, originalPages);
+        // if (closedCount > 0) {
+        //   console.log(
+        //     `✅ 页面 ${pageIndex + 1}: 已关闭 ${closedCount} 个新页面`
+        //   );
+        // }
 
         // 重新导航到Google首页
         if (!page.isClosed()) {
@@ -442,24 +456,24 @@ class FixedKeepAliveGoogleSearchService {
     } finally {
       executionDetails.duration = Date.now() - startTime;
 
-      // 最终清理：确保关闭所有新页面
-      try {
-        const finalClosedCount = await this.closeNewPages(
-          context,
-          originalPages
-        );
-        if (finalClosedCount > 0) {
-          console.log(
-            `🧹 页面 ${pageIndex + 1
-            }: 最终清理，关闭了 ${finalClosedCount} 个新页面`
-          );
-          executionDetails.openedNewPages += finalClosedCount;
-        }
-      } catch (cleanupError) {
-        console.error(
-          `🚨 页面 ${pageIndex + 1}: 最终清理时出错 - ${cleanupError.message}`
-        );
-      }
+      // // 最终清理：确保关闭所有新页面
+      // try {
+      //   const finalClosedCount = await this.closeNewPages(
+      //     context,
+      //     originalPages
+      //   );
+      //   if (finalClosedCount > 0) {
+      //     console.log(
+      //       `🧹 页面 ${pageIndex + 1
+      //       }: 最终清理，关闭了 ${finalClosedCount} 个新页面`
+      //     );
+      //     executionDetails.openedNewPages += finalClosedCount;
+      //   }
+      // } catch (cleanupError) {
+      //   console.error(
+      //     `🚨 页面 ${pageIndex + 1}: 最终清理时出错 - ${cleanupError.message}`
+      //   );
+      // }
 
       // 更新统计
       this.updateKeepAliveStats(pageIndex, success, executionDetails);
@@ -690,7 +704,57 @@ class FixedKeepAliveGoogleSearchService {
           // });
 
           const page = await context.newPage();
+          // 启用请求拦截
+          // await page.route('**/*', (route, request) => {
+          //   const resourceType = request.resourceType();
+          //   const url = request.url();
+          //   console.log(`请求资源类型: ${resourceType}, URL: ${url}`);
+          //   if (Math.random() < 0.5) {
+          //     // 如果资源类型是脚本并且URL包含指定的字符串，则中止请求
+          //     // if (resourceType === 'script') {
+          //     //   console.log(`🚫 阻止 JavaScript: ${url}`);
+          //     //   // route.abort(); // 默认中止
+          //     //   // route.abort('failed'); // 模拟失败
+          //     //   // route.abort('accessdenied'); // 模拟访问被拒绝
+          //     //   // route.abort('connectionreset'); // 模拟连接重置
+          //     //   route.abort('timedout'); // 模拟超时
+          //     // } else 
+          //     if (resourceType === 'stylesheet') {
+          //       console.log(`🚫 阻止 CSS: ${url}`);
+          //       route.abort('timedout'); // 模拟超时
+          //     } else if (resourceType === 'image') {
+          //       console.log(`🚫 阻止图片: ${url}`);
+          //       route.abort('timedout'); // 模拟超时
+          //     } else {
+          //       route.continue();
+          //     }
+          //   }
+          // });
+          // // 监听所有响应
+          // page.on('response', async (response) => {
+          //   const status = response.status();
 
+          //   if (status >= 400) {
+          //     try {
+          //       const url = response.url();
+          //       const headers = response.headers();
+          //       let responseBody = '';
+
+          //       // 尝试获取响应体
+          //       try {
+          //         responseBody = await response.text();
+          //       } catch (e) {
+          //         responseBody = '[无法读取响应体]';
+          //       }
+
+
+          //       console.log(`❌ 错误响应: ${status} - ${url} ${responseBody}`);
+
+          //     } catch (error) {
+          //       console.error('记录错误响应时出错:', error);
+          //     }
+          //   }
+          // });
           // // 导航到Google首页进行预热
           // await page.goto("https://www.google.com", {
           //   waitUntil: "domcontentloaded",
@@ -711,17 +775,17 @@ class FixedKeepAliveGoogleSearchService {
       // 启动WebSocket服务器
       this.startWebSocketServer(this.wsPort);
 
-      // 执行初始保活（不阻塞服务启动）
-      setTimeout(() => {
-        this.executeInitialKeepAlive().then(() => {
-          console.log("🎯 初始保活全部完成，开始定期保活调度...");
+      // // 执行初始保活（不阻塞服务启动）
+      // setTimeout(() => {
+      //   this.executeInitialKeepAlive().then(() => {
+      //     console.log("🎯 初始保活全部完成，开始定期保活调度...");
 
-          // 初始保活完成后，为每个页面启动定期保活机制
-          for (let i = 0; i < this.pagePool.length; i++) {
-            this.startKeepAliveForPage(this.pagePool[i], i);
-          }
-        });
-      }, 3000); // 服务启动后3秒开始初始保活
+      //     // 初始保活完成后，为每个页面启动定期保活机制
+      //     for (let i = 0; i < this.pagePool.length; i++) {
+      //       this.startKeepAliveForPage(this.pagePool[i], i);
+      //     }
+      //   });
+      // }, 3000); // 服务启动后3秒开始初始保活
     } catch (error) {
       console.error("💥 初始化失败:", error);
       throw error;
@@ -830,22 +894,27 @@ class FixedKeepAliveGoogleSearchService {
       return;
     }
 
-    await this.executeSearch(keyword, idlePage, ws, taskId);
+    this.pageStatus.set(idlePage, "busy");
+    this.executeSearch(keyword, idlePage, ws, taskId);
   }
 
   findIdlePage() {
+    let pageLastKeepAlive = null;
     for (const [page, status] of this.pageStatus) {
       if (status === "idle") {
-        return page;
+        if (pageLastKeepAlive === null || this.pageLastKeepAlive.get(page) < this.pageLastKeepAlive.get(pageLastKeepAlive)) {
+          pageLastKeepAlive = page;
+        }
       }
     }
-    return null;
+    return pageLastKeepAlive;
   }
 
   async executeSearch(keyword, page, ws, taskId) {
+
     // 获取上下文和原始页面列表
     const context = page.context();
-    const originalPages = context.pages();
+    //const originalPages = context.pages();
 
     try {
       // 取消当前页面的保活定时器（如果有）
@@ -853,8 +922,6 @@ class FixedKeepAliveGoogleSearchService {
         clearTimeout(this.keepAliveIntervals.get(page));
         this.keepAliveIntervals.delete(page);
       }
-
-      this.pageStatus.set(page, "busy");
 
       console.log(`🔍 开始搜索: ${keyword}`);
 
@@ -866,6 +933,12 @@ class FixedKeepAliveGoogleSearchService {
       });
 
       // 导航到Google搜索页面
+      // const encodedKeyword = encodeURIComponent(keyword);
+      // const searchUrl = `https://www.google.com/search?q=${encodedKeyword}`;
+      // await page.goto(searchUrl, {
+      //   waitUntil: "commit", //"domcontentloaded",
+      //   timeout: 30000,
+      // });
       const currentUrl = await page.url();
       if (currentUrl.includes("google.com")) {
         console.log(`✅ 新页面是谷歌搜索结果页`);
@@ -874,15 +947,13 @@ class FixedKeepAliveGoogleSearchService {
         // 访问Google
         await page.goto("https://www.google.com", {
           waitUntil: "commit", //"domcontentloaded",
-          timeout: 30000,
+          timeout: 5000,
         });
       }
 
       // 模拟人类行为
       // await this.humanDelay(500, 1500);
 
-      // 输入搜索关键词，第一个输入框
-      const searchBoxSelector = 'textarea[name="q"], input[name="q"]';
       // 多种选择器尝试
       // const selectors = [
       //   'textarea[name="q"]',
@@ -904,12 +975,15 @@ class FixedKeepAliveGoogleSearchService {
       // if (!searchBox || !(await searchBox.isVisible())) {
       //   throw new Error('未找到搜索框');
       // }
-      await page.waitForSelector(searchBoxSelector, { timeout: 5000, state: 'visible' });
-      //await searchBox.click(); // , { delay: 0 }
-      //await searchBox.fill(keyword);
-      //await page.click(searchBoxSelector); // , { delay: 0 }
+      // 输入搜索关键词，第一个输入框
+      const searchBoxSelector = 'textarea[name="q"], input[name="q"]';
+      await page.waitForSelector(searchBoxSelector, { timeout: 2000, state: 'visible' });
+      // await searchBox.fill(keyword);
+      // await page.click(searchBoxSelector); // , { delay: 0 }
       await page.fill(searchBoxSelector, keyword);
       // await this.typeWithRandomSpeed(page, searchBoxSelector, keyword);
+      // 按回车键搜索
+      await page.keyboard.press("Enter");
 
       //await this.humanDelay(500, 1000);
 
@@ -919,13 +993,11 @@ class FixedKeepAliveGoogleSearchService {
       //   Math.random() * 400 + 100
       // );
 
-      // 按回车键搜索
-      await page.keyboard.press("Enter");
 
       //await page.waitForLoadState("domcontentloaded");
 
       // 等待搜索结果加载
-      await page.waitForSelector("#search", { timeout: 5000, state: 'visible' });
+      await page.waitForSelector("#search", { timeout: 3000, state: 'visible' });
 
       // 提取搜索结果
       const searchResults = await page.$$eval("#search a", (results) => {
@@ -1009,15 +1081,20 @@ class FixedKeepAliveGoogleSearchService {
             const newPage = await newPagePromise;
 
             if (newPage) {
-              console.log(`🆕 检测到新页面打开，等待加载...`);
+              try {
+                console.log(`🆕 检测到新页面打开，等待加载...`);
 
-              // 等待新页面加载
-              await newPage.waitForLoadState("domcontentloaded");
-              await this.humanDelay(500, 2000);
+                // 等待新页面加载
+                await newPage.waitForLoadState("domcontentloaded");
+                await this.humanDelay(500, 2000);
 
-              // 关闭新页面
-              console.log(`❌ 关闭新打开的页面`);
-              await newPage.close();
+                // 关闭新页面
+                console.log(`❌ 关闭新打开的页面`);
+              } catch {
+
+              } finally {
+                await newPage.close();
+              }
             } else {
               // 没有新页面打开，在当前页面导航
               console.log(`🔙  在当前页面打开链接，等待加载后返回`);
@@ -1045,21 +1122,19 @@ class FixedKeepAliveGoogleSearchService {
           } catch (clickError) {
             console.log(`❌ 点击结果失败 - ${clickError.message}`);
           }
+          this.pageLastKeepAlive.set(page, Date.now());
         }
       }
     } catch (error) {
       console.error(`💥 搜索错误 ${keyword}:`, error);
       this.sendError(ws, `搜索失败: ${error.message}`, taskId);
     } finally {
-      // 清理可能打开的新页面
-      try {
-        await this.closeNewPages(context, originalPages);
-      } catch (cleanupError) {
-        console.error(`清理新页面时出错: ${cleanupError.message}`);
-      }
-
-      // 恢复页面状态
-      this.pageStatus.set(page, "idle");
+      // // 清理可能打开的新页面
+      // try {
+      //   await this.closeNewPages(context, originalPages);
+      // } catch (cleanupError) {
+      //   console.error(`清理新页面时出错: ${cleanupError.message}`);
+      // }
 
       // 重新启动保活机制
       const pageIndex = this.pagePool.indexOf(page);
@@ -1067,6 +1142,8 @@ class FixedKeepAliveGoogleSearchService {
         this.startKeepAliveForPage(page, pageIndex);
       }
 
+      // 恢复页面状态
+      this.pageStatus.set(page, "idle");
       // 处理队列中的任务
       this.processQueue();
     }
@@ -1117,6 +1194,14 @@ class FixedKeepAliveGoogleSearchService {
       this.wsServer.close();
     }
 
+    console.log(`🚫 关闭所有浏览器页面 ${this.pagePool.length}...`);
+    if (this.pagePool) {
+      for (const page of this.pagePool) {
+        await page.close();
+      }
+    }
+
+    console.log(`🚫 关闭所有浏览器实例 ${this.browsers.length}...`);
     if (this.browsers) {
       for (const browser of this.browsers) {
         await browser.close();

@@ -6,7 +6,7 @@ const CONFIG = {
   baseURL: 'http://localhost:3000',
   endpoint: '/search',
   concurrency: 10, // 并发数
-  totalRequests: 100, // 总请求数
+  totalRequests: 50, // 总请求数
   timeout: 5000, // 请求超时时间(毫秒)
 };
 
