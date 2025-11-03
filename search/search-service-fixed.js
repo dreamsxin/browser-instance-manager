@@ -3,16 +3,21 @@ const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid");
 const { faker } = require("@faker-js/faker");
 const ProxyChain = require("proxy-chain");
+const fs = require('fs');
+const path = require('path');
 
 class FixedKeepAliveGoogleSearchService {
-  constructor() {
-    this.browser = null;
+  constructor(port = 8080) {
+    this.browsers = [];
+    this.browserNum = 3;
     this.pagePool = [];
     this.pageProxy = new Map();
     this.pageStatus = new Map(); // 'idle' | 'busy' | 'keepalive'
+    this.pageLastKeepAlive = new Map();
     this.taskQueue = [];
     this.wsServer = null;
-    this.maxPages = 3;
+    this.wsPort = port;
+    this.maxPages = 6;
     this.isInitialized = false;
     this.keepAliveIntervals = new Map();
     this.clients = new Set();
@@ -28,8 +33,8 @@ class FixedKeepAliveGoogleSearchService {
     };
 
     this.keepAliveConfig = {
-      minInterval: 1 * 60 * 1000, // 最小1分钟
-      maxInterval: 10 * 60 * 1000, // 最大10分钟
+      minInterval: 5 * 60 * 1000, // 最小1分钟
+      maxInterval: 20 * 60 * 1000, // 最大10分钟
       maxHistory: 100,
     };
 
@@ -140,10 +145,10 @@ class FixedKeepAliveGoogleSearchService {
       successRate:
         this.keepAliveStats.totalExecutions > 0
           ? (
-              (this.keepAliveStats.successfulExecutions /
-                this.keepAliveStats.totalExecutions) *
-              100
-            ).toFixed(2) + "%"
+            (this.keepAliveStats.successfulExecutions /
+              this.keepAliveStats.totalExecutions) *
+            100
+          ).toFixed(2) + "%"
           : "0%",
       lastExecution: this.keepAliveStats.lastExecution,
       pageStats: pageStatsFormatted,
@@ -207,11 +212,11 @@ class FixedKeepAliveGoogleSearchService {
       // 访问Google
       await page.goto("https://www.google.com", {
         waitUntil: "domcontentloaded",
-        timeout: 30000,
+        timeout: 10000,
       });
 
       console.log(`📄 页面 ${pageIndex + 1}: 等待页面加载完成`);
-      await this.humanDelay(1000, 3000);
+      await this.humanDelay(500, 1000);
 
       // 生成随机搜索词
       const keyword = faker.word.sample();
@@ -219,9 +224,32 @@ class FixedKeepAliveGoogleSearchService {
       console.log(`🔍 页面 ${pageIndex + 1} 保活搜索词: ${keyword}`);
 
       // 输入搜索词
-      const searchBoxSelector = 'textarea[name="q"], input[name="q"]';
-      await page.click(searchBoxSelector, { delay: 100 });
-      await page.fill(searchBoxSelector, "");
+      //const searchBoxSelector = 'textarea[name="q"], input[name="q"]';
+      // 多种选择器尝试
+      const selectors = [
+        'textarea[name="q"]',
+        'input[name="q"]',
+        'textarea[type="search"]',
+        'input[type="search"]',
+        'textarea',
+        'input'
+      ];
+
+      let searchBox = null;
+      let searchBoxSelector = null;
+      for (const selector of selectors) {
+        searchBox = page.locator(selector).first();
+        if (await searchBox.isVisible()) {
+          searchBoxSelector = selector;
+          break;
+        }
+      }
+
+      if (!searchBox || !(await searchBox.isVisible())) {
+        throw new Error('未找到搜索框');
+      }
+      await searchBox.click(); // , { delay: 0 }
+      await searchBox.fill(keyword);
       await this.typeWithRandomSpeed(page, searchBoxSelector, keyword);
 
       await this.humanDelay(500, 1000);
@@ -248,16 +276,21 @@ class FixedKeepAliveGoogleSearchService {
         console.log(`⚠️  页面 ${pageIndex + 1}: 搜索结果可能为空`);
         throw new Error("搜索结果页面内容过少");
       }
+      this.pageLastKeepAlive.set(page, Date.now());
 
       console.log(`✅ 页面 ${pageIndex + 1}: 搜索成功`);
       await this.humanDelay(1000, 3000);
 
       // 随机滚动页面
       console.log(`📜 页面 ${pageIndex + 1}: 随机滚动页面`);
-      await page.evaluate(async () => {
+      await page.evaluate(async (pageIndex) => {
         const scrollHeight = document.body.scrollHeight;
         const viewportHeight = window.innerHeight;
         const maxScroll = Math.max(0, scrollHeight - viewportHeight);
+        if (maxScroll <= 0) {
+          console.log(`⚠️  页面 ${pageIndex + 1}: 页面内容较短，无需滚动`);
+          return;
+        }
         const scrollSteps = Math.floor(Math.random() * 5) + 3;
 
         for (let i = 0; i < scrollSteps; i++) {
@@ -267,14 +300,22 @@ class FixedKeepAliveGoogleSearchService {
             setTimeout(resolve, Math.random() * 500 + 200)
           );
         }
-      });
+      }, pageIndex);
 
       // 随机点击搜索结果 - 修复新页面问题
-      const links = await page.$$("a h3");
-      if (links.length > 0 && Math.random() > 0.3) {
+      const allLinks = await page.$$("a h3");
+      const visibleLinks = [];
+
+      for (const link of allLinks) {
+        const isVisible = await link.isVisible();
+        if (isVisible) {
+          visibleLinks.push(link);
+        }
+      }
+      if (visibleLinks.length > 0 && Math.random() > 0.5) {
         try {
-          const randomIndex = Math.floor(Math.random() * links.length);
-          const randomLink = links[randomIndex];
+          const randomIndex = Math.floor(Math.random() * visibleLinks.length);
+          const randomLink = visibleLinks[randomIndex];
 
           console.log(
             `🔗 页面 ${pageIndex + 1}: 随机点击第${randomIndex + 1}个结果`
@@ -409,8 +450,7 @@ class FixedKeepAliveGoogleSearchService {
         );
         if (finalClosedCount > 0) {
           console.log(
-            `🧹 页面 ${
-              pageIndex + 1
+            `🧹 页面 ${pageIndex + 1
             }: 最终清理，关闭了 ${finalClosedCount} 个新页面`
           );
           executionDetails.openedNewPages += finalClosedCount;
@@ -428,8 +468,7 @@ class FixedKeepAliveGoogleSearchService {
       if (this.pageStatus.get(page) === "keepalive" && !page.isClosed()) {
         this.pageStatus.set(page, "idle");
         console.log(
-          `🔄 页面 ${pageIndex + 1}: 恢复空闲状态，耗时 ${
-            executionDetails.duration
+          `🔄 页面 ${pageIndex + 1}: 恢复空闲状态，耗时 ${executionDetails.duration
           }ms`
         );
       } else if (page.isClosed()) {
@@ -473,9 +512,9 @@ class FixedKeepAliveGoogleSearchService {
     const scheduleKeepAlive = () => {
       const interval = Math.floor(
         Math.random() *
-          (this.keepAliveConfig.maxInterval -
-            this.keepAliveConfig.minInterval) +
-          this.keepAliveConfig.minInterval
+        (this.keepAliveConfig.maxInterval -
+          this.keepAliveConfig.minInterval) +
+        this.keepAliveConfig.minInterval
       );
 
       const nextExecution = new Date(Date.now() + interval);
@@ -525,8 +564,7 @@ class FixedKeepAliveGoogleSearchService {
             console.log(`🚀 页面 ${i + 1}: 开始初始保活`);
             const result = await this.executeKeepAlive(page, i);
             console.log(
-              `✅ 页面 ${i + 1}: 初始保活完成，结果: ${
-                result.success ? "成功" : "失败"
+              `✅ 页面 ${i + 1}: 初始保活完成，结果: ${result.success ? "成功" : "失败"
               }`
             );
             resolve({ pageIndex: i, ...result });
@@ -534,7 +572,7 @@ class FixedKeepAliveGoogleSearchService {
             console.error(`💥 页面 ${i + 1}: 初始保活失败`, error);
             resolve({ pageIndex: i, success: false, error: error.message });
           }
-        }, i * 3000); // 每个页面间隔3秒启动，避免同时发起大量请求
+        }, Math.random() * i * 500); // 每个页面间隔3秒启动，避免同时发起大量请求
       });
 
       keepAlivePromises.push(promise);
@@ -564,75 +602,114 @@ class FixedKeepAliveGoogleSearchService {
     return results;
   }
 
-  async initialize() {
+  // 同步读取
+  readConfigSync(configPath) {
     try {
+      const data = fs.readFileSync(configPath, 'utf8');
+      return JSON.parse(data);
+    } catch (error) {
+      console.error('读取配置文件失败:', error);
+      return null;
+    }
+  }
+
+  async initialize() {
+
+    try {
+      // 使用示例
+      const configPath = path.join(__dirname, 'config.json');
+      const config = this.readConfigSync(configPath);
+      console.log('配置内容:', config);
+      if (!config.executablePath) {
+        throw new Error("配置文件中未指定浏览器可执行路径");
+      }
+
+      if (config.browserNum) {
+        this.browserNum = config.browserNum;
+      }
+
+      if (config.maxPages) {
+        this.maxPages = config.maxPages;
+      }
+
       console.log("🚀 启动Playwright浏览器实例...");
 
-      this.browser = await chromium.launch({
-        executablePath:
-          "E:\\soft\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\chrome.exe",
-        headless: false, // 设置为true则不显示浏览器
-        slowMo: 100, // 减慢操作速度
-        args: [
-          //   '--no-sandbox',
-          //   '--disable-setuid-sandbox',
-          "--window-size=1920,1080", // 无头模式时，设置浏览器窗口大小
-          "--headless=new", // 启用新的headless模式
-          "--no-first-run", // 禁用首次运行提示
-          "--no-default-browser-check", // 禁用默认浏览器检查
-          "--disable-default-apps", // 禁用默认应用
-          "--disable-blink-features=AutomationControlled",
-          "--disable-background-timer-throttling", // 禁用定时器节流
-          "--disable-backgrounding-occluded-windows", // 禁用窗口遮挡
-          "--disable-renderer-backgrounding", // 禁用渲染器后台
-          "--disable-features=VizDisplayCompositor", // 禁用VizDisplayCompositor
-          "--disable-accelerated-2d-canvas", // 禁用2D加速画布
-          "--disable-gpu", // 禁用GPU加速
-        ],
-      });
 
-      console.log("📄 创建页面池...");
-      for (let i = 0; i < this.maxPages; i++) {
-        const oldProxyUrl = "http://127.0.0.1:7890";
-        const newProxyUrl = await proxyChain.anonymizeProxy(oldProxyUrl);
+      console.log(`📄 创建页面池，最大页面数: ${this.maxPages}...`);
+      const proxyUrls = config.proxyUrls;
+      if (proxyUrls.length < this.browserNum * this.maxPages) {
+        throw new Error("代理数量不足，无法创建足够的页面");
+      }
 
-        // Prints something like "http://127.0.0.1:45678"
-        console.log(newProxyUrl);
-        const context = await this.browser.newContext({
-          viewport: null,
-          proxy: newProxyUrl
-            ? {
+      for (let i = 0; i < this.browserNum; i++) {
+        const browser = await chromium.launch({
+          executablePath: config.executablePath,
+          headless: false, // 设置为true则不显示浏览器
+          slowMo: 100, // 减慢操作速度
+          args: [
+            //   '--no-sandbox',
+            //   '--disable-setuid-sandbox',
+            //"--window-size=1920,1080", // 无头模式时，设置浏览器窗口大小
+            //"--headless=new", // 启用新的headless模式
+            "--no-first-run", // 禁用首次运行提示
+            "--no-default-browser-check", // 禁用默认浏览器检查
+            "--disable-default-apps", // 禁用默认应用
+            "--disable-blink-features=AutomationControlled",
+            "--disable-background-timer-throttling", // 禁用定时器节流
+            "--disable-backgrounding-occluded-windows", // 禁用窗口遮挡
+            "--disable-renderer-backgrounding", // 禁用渲染器后台
+            "--disable-features=VizDisplayCompositor", // 禁用VizDisplayCompositor
+            "--disable-accelerated-2d-canvas", // 禁用2D加速画布
+            "--disable-gpu", // 禁用GPU加速
+            '--disable-features=TranslateUI',
+            '--disable-ipc-flooding-protection',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--disable-renderer-backgrounding',
+          ],
+        });
+        this.browsers.push(browser);
+        for (let j = 0; j < this.maxPages; j++) {
+          const oldProxyUrl = proxyUrls[i * this.maxPages + j];
+          const newProxyUrl = await ProxyChain.anonymizeProxy(oldProxyUrl);
+          //const newProxyUrl = null;
+          // Prints something like "http://127.0.0.1:45678"
+          console.log(newProxyUrl);
+          const context = await browser.newContext({
+            viewport: null,
+            proxy: newProxyUrl
+              ? {
                 server: newProxyUrl,
               }
-            : undefined,
-        });
+              : undefined,
+          });
 
-        // 屏蔽自动化特征
-        // await context.addInitScript(() => {
-        //   Object.defineProperty(navigator, 'webdriver', { get: () => false });
-        //   Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-        // });
+          // 屏蔽自动化特征
+          // await context.addInitScript(() => {
+          //   Object.defineProperty(navigator, 'webdriver', { get: () => false });
+          //   Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+          // });
 
-        const page = await context.newPage();
+          const page = await context.newPage();
 
-        // 导航到Google首页进行预热
-        await page.goto("https://www.google.com", {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
-        });
+          // // 导航到Google首页进行预热
+          // await page.goto("https://www.google.com", {
+          //   waitUntil: "domcontentloaded",
+          //   timeout: 30000,
+          // });
 
-        this.pagePool.push(page);
-        this.pageStatus.set(page, "idle");
-        this.pageProxy.set(page, newProxyUrl);
+          this.pagePool.push(page);
+          this.pageStatus.set(page, "idle");
+          this.pageProxy.set(page, newProxyUrl);
 
-        console.log(`✅ 页面 ${i + 1}/${this.maxPages} 初始化完成`);
+          console.log(`✅ 页面 ${i + 1}/${this.maxPages} 初始化完成`);
+        }
       }
 
       this.isInitialized = true;
       console.log("🎉 搜索服务初始化完成");
 
       // 启动WebSocket服务器
-      this.startWebSocketServer(8080);
+      this.startWebSocketServer(this.wsPort);
 
       // 执行初始保活（不阻塞服务启动）
       setTimeout(() => {
@@ -743,6 +820,9 @@ class FixedKeepAliveGoogleSearchService {
     const idlePage = this.findIdlePage();
 
     if (!idlePage) {
+      if (this.taskQueue.length >= this.maxPages) {
+        return this.sendError(ws, "任务队列已满，稍后再试", taskId);
+      }
       this.taskQueue.push({ task, ws, taskId });
       console.log(
         `⏳ 无空闲页面，任务 ${taskId} 加入队列，当前队列长度: ${this.taskQueue.length}`
@@ -787,13 +867,13 @@ class FixedKeepAliveGoogleSearchService {
 
       // 导航到Google搜索页面
       const currentUrl = await page.url();
-      if (currentUrl.includes("google.com/search")) {
+      if (currentUrl.includes("google.com")) {
         console.log(`✅ 新页面是谷歌搜索结果页`);
       } else {
         console.log(`⚠️ 新页面不是谷歌搜索结果页`);
         // 访问Google
         await page.goto("https://www.google.com", {
-          waitUntil: "domcontentloaded",
+          waitUntil: "commit", //"domcontentloaded",
           timeout: 30000,
         });
       }
@@ -801,9 +881,33 @@ class FixedKeepAliveGoogleSearchService {
       // 模拟人类行为
       // await this.humanDelay(500, 1500);
 
-      // 输入搜索关键词
+      // 输入搜索关键词，第一个输入框
       const searchBoxSelector = 'textarea[name="q"], input[name="q"]';
-      await page.click(searchBoxSelector); // , { delay: 0 }
+      // 多种选择器尝试
+      // const selectors = [
+      //   'textarea[name="q"]',
+      //   'input[name="q"]',
+      //   'textarea[type="search"]',
+      //   'input[type="search"]',
+      //   'textarea',
+      //   'input'
+      // ];
+
+      // let searchBox = null;
+      // for (const selector of selectors) {
+      //   searchBox = page.locator(selector).first();
+      //   if (await searchBox.isVisible()) {
+      //     break;
+      //   }
+      // }
+
+      // if (!searchBox || !(await searchBox.isVisible())) {
+      //   throw new Error('未找到搜索框');
+      // }
+      await page.waitForSelector(searchBoxSelector, { timeout: 5000, state: 'visible' });
+      //await searchBox.click(); // , { delay: 0 }
+      //await searchBox.fill(keyword);
+      //await page.click(searchBoxSelector); // , { delay: 0 }
       await page.fill(searchBoxSelector, keyword);
       // await this.typeWithRandomSpeed(page, searchBoxSelector, keyword);
 
@@ -818,8 +922,10 @@ class FixedKeepAliveGoogleSearchService {
       // 按回车键搜索
       await page.keyboard.press("Enter");
 
+      //await page.waitForLoadState("domcontentloaded");
+
       // 等待搜索结果加载
-      await page.waitForSelector("#search", { timeout: 15000 });
+      await page.waitForSelector("#search", { timeout: 5000, state: 'visible' });
 
       // 提取搜索结果
       const searchResults = await page.$$eval("#search a", (results) => {
@@ -850,70 +956,95 @@ class FixedKeepAliveGoogleSearchService {
         total: searchResults.length,
         timestamp: new Date().toISOString(),
       });
-
       console.log(
         `✅ 搜索完成: ${keyword}, 找到 ${searchResults.length} 个结果`
       );
 
-      // 随机点击搜索结果 - 修复新页面问题
-      const links = await page.$$("a h3");
-      if (links.length > 0 && Math.random() > 0.3) {
-        try {
-          const randomIndex = Math.floor(Math.random() * links.length);
-          const randomLink = links[randomIndex];
+      // 读取最后保活成功时间
+      const lastKeepAlive = this.pageLastKeepAlive.get(page);
+      console.log(`⏰ 最后保活时间: ${lastKeepAlive}`);
+      // 判断保活时间是否超过阈值
+      const keepAliveThreshold = 5 * 60 * 1000; // 5分钟
+      if (lastKeepAlive && Date.now() - lastKeepAlive < keepAliveThreshold) {
+        console.log(`⏰ 最后保活时间: ${Date.now() - lastKeepAlive}ms 未超过阈值，还在有效期`);
+        return
+      }
+      console.log(`⚠️ 保活时间超过阈值，不在有效期`);
+      // 随机决定是否进行后续操作
+      if (Math.random() > 0.5) {
+        // 后续操作：点击搜索结果
+        console.log(`🔗 开始随机点击搜索结果`);
 
-          console.log(`🔗 随机点击第${randomIndex + 1}个结果`);
 
-          await randomLink.scrollIntoViewIfNeeded();
-          await this.humanDelay(1000, 2000);
+        // 随机点击搜索结果 - 修复新页面问题
+        const allLinks = await page.$$("a h3");
 
-          // 监听新页面打开事件
-          const newPagePromise = context
-            .waitForEvent("page", { timeout: 5000 })
-            .catch(() => null); // 超时表示没有新页面打开
+        const visibleLinks = [];
 
-          // 点击链接
-          await randomLink.click({ delay: 100 });
-
-          // 等待可能的新页面
-          const newPage = await newPagePromise;
-
-          if (newPage) {
-            console.log(`🆕 检测到新页面打开，等待加载...`);
-
-            // 等待新页面加载
-            await newPage.waitForLoadState("domcontentloaded");
-            await this.humanDelay(500, 2000);
-
-            // 关闭新页面
-            console.log(`❌ 关闭新打开的页面`);
-            await newPage.close();
-          } else {
-            // 没有新页面打开，在当前页面导航
-            console.log(`🔙  在当前页面打开链接，等待加载后返回`);
-
-            // 等待页面加载
-            await page.waitForLoadState("domcontentloaded");
-            await this.humanDelay(500, 2000);
-
-            // 返回搜索结果页
-            await page.goBack({ waitUntil: "domcontentloaded" });
-
-            // 判断是否是谷歌搜索结果页
-            const currentUrl = await page.url();
-            if (currentUrl.includes("google.com/search")) {
-              console.log(`✅ 新页面是谷歌搜索结果页`);
-            } else {
-              console.log(`⚠️ 新页面不是谷歌搜索结果页`);
-              // 访问Google
-              await page.goto("https://www.google.com", {
-                waitUntil: "domcontentloaded",
-                timeout: 30000,
-              });
-            }
+        for (const link of allLinks) {
+          const isVisible = await link.isVisible();
+          if (isVisible) {
+            visibleLinks.push(link);
           }
-        } catch (clickError) {
-          console.log(`❌ 点击结果失败 - ${clickError.message}`);
+        }
+        if (visibleLinks.length > 0 && Math.random() > 0.3) {
+          try {
+            const randomIndex = Math.floor(Math.random() * visibleLinks.length);
+            const randomLink = visibleLinks[randomIndex];
+
+            console.log(`🔗 随机点击第${randomIndex + 1}个结果`);
+
+            await randomLink.scrollIntoViewIfNeeded();
+            await this.humanDelay(1000, 2000);
+
+            // 监听新页面打开事件
+            const newPagePromise = context
+              .waitForEvent("page", { timeout: 5000 })
+              .catch(() => null); // 超时表示没有新页面打开
+
+            // 点击链接
+            await randomLink.click({ delay: 100 });
+
+            // 等待可能的新页面
+            const newPage = await newPagePromise;
+
+            if (newPage) {
+              console.log(`🆕 检测到新页面打开，等待加载...`);
+
+              // 等待新页面加载
+              await newPage.waitForLoadState("domcontentloaded");
+              await this.humanDelay(500, 2000);
+
+              // 关闭新页面
+              console.log(`❌ 关闭新打开的页面`);
+              await newPage.close();
+            } else {
+              // 没有新页面打开，在当前页面导航
+              console.log(`🔙  在当前页面打开链接，等待加载后返回`);
+
+              // 等待页面加载
+              await page.waitForLoadState("domcontentloaded");
+              await this.humanDelay(500, 2000);
+
+              // 返回搜索结果页
+              await page.goBack({ waitUntil: "domcontentloaded" });
+
+              // 判断是否是谷歌搜索结果页
+              const currentUrl = await page.url();
+              if (currentUrl.includes("google.com/search")) {
+                console.log(`✅ 新页面是谷歌搜索结果页`);
+              } else {
+                console.log(`⚠️ 新页面不是谷歌搜索结果页`);
+                // 访问Google
+                await page.goto("https://www.google.com", {
+                  waitUntil: "domcontentloaded",
+                  timeout: 30000,
+                });
+              }
+            }
+          } catch (clickError) {
+            console.log(`❌ 点击结果失败 - ${clickError.message}`);
+          }
         }
       }
     } catch (error) {
@@ -986,13 +1117,15 @@ class FixedKeepAliveGoogleSearchService {
       this.wsServer.close();
     }
 
-    if (this.browser) {
-      await this.browser.close();
+    if (this.browsers) {
+      for (const browser of this.browsers) {
+        await browser.close();
+      }
     }
     // 清除所有页面代理
     for (const proxyUrl of this.pageProxy.values()) {
       if (proxyUrl) {
-        await proxyChain.closeAnonymizedProxy(proxyUrl, true);
+        await ProxyChain.closeAnonymizedProxy(proxyUrl, true);
       }
     }
     this.pageProxy.clear();
