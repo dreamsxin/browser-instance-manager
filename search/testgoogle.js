@@ -16,7 +16,7 @@ class BrowserRequestManager {
         };
     }
 
-    async init() {
+    async init(proxy) {
         // 启动浏览器
         this.browser = await chromium.launch({
             executablePath: "E:\\soft\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\chrome.exe",
@@ -42,6 +42,11 @@ class BrowserRequestManager {
                 '--enable-features=NetworkService,NetworkServiceInProcess',
                 '--disable-renderer-backgrounding',
             ],
+            proxy: proxy ? {
+                server: proxy.server,
+                username: proxy.username,
+                password: proxy.password
+            } : undefined
         });
 
         // 创建浏览器上下文
