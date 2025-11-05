@@ -8,23 +8,22 @@ class WebScraper {
   constructor() {
     this.browser = null;
     this.isInitialized = false;
-    this.browser2 = null;
     this.requestCount = 0;
     this.maxRequestsBeforeRestart = 500;
     
-    // 分开管理两个浏览器的页面池
-    this.browser1PagePool = [];
-    this.browser2PagePool = [];
+    // 单个浏览器的页面池
+    this.pagePool = [];
     this.pageUsageCount = new Map();
     this.maxPageUsage = 20;
     
-    // 当前使用的浏览器标识
-    this.currentBrowser = 'browser1';
-    this.browserRestartInProgress = false;
-    
-    // 新增：等待队列和页面状态管理
+    // 等待队列和页面状态管理
     this.waitingQueue = [];
     this.pageStatus = new Map(); // 记录页面状态: 'available', 'in-use', 'retiring'
+    this.browserRestartInProgress = false;
+    
+    // 新增：重启期间的请求队列
+    this.restartQueue = [];
+    this.restartPromise = null;
   }
 
   async initBrowser() {
@@ -65,32 +64,30 @@ class WebScraper {
 
     try {
       this.browser = await this.initBrowser();
-      this.browser2 = await this.initBrowser();
       
-      // 分别初始化两个浏览器的页面池
-      await this.initializeBrowserPagePool(this.browser, this.browser1PagePool);
-      await this.initializeBrowserPagePool(this.browser2, this.browser2PagePool);
+      // 初始化页面池
+      await this.initializePagePool();
       
       this.isInitialized = true;
-      console.log('Playwright browser initialized with separate page pools');
+      console.log('Playwright browser initialized with page pool');
     } catch (error) {
       console.error('Failed to initialize browser:', error);
       throw error;
     }
   }
 
-  async initializeBrowserPagePool(browser, pagePool) {
-    // 为每个浏览器创建5个页面
-    for (let i = 0; i < 5; i++) {
-      const page = await this.createPageWithProxy(browser);
+  async initializePagePool() {
+    // 创建5个页面
+    for (let i = 0; i < 6; i++) {
+      const page = await this.createPageWithProxy(this.browser);
       if (page) {
-        const pageObj = { page, browser, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
-        pagePool.push(pageObj);
+        const pageObj = { page, browser: this.browser, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
+        this.pagePool.push(pageObj);
         this.pageUsageCount.set(page, 0);
         this.pageStatus.set(page, 'available');
       }
     }
-    console.log(`Browser page pool initialized with ${pagePool.length} pages`);
+    console.log(`Page pool initialized with ${this.pagePool.length} pages`);
   }
 
   async createPageWithProxy(browser) {
@@ -146,16 +143,21 @@ class WebScraper {
     }
   }
 
-  // 新增：获取可用页面的方法，支持等待队列
+  // 获取可用页面的方法，支持等待队列
   async getAvailablePage() {
+    // 如果浏览器正在重启，等待重启完成
+    if (this.browserRestartInProgress) {
+      console.log('Browser restart in progress, waiting...');
+      return new Promise((resolve) => {
+        this.waitingQueue.push(resolve);
+      });
+    }
+    
     // 清理使用次数过多的页面
     await this.cleanupOverusedPages();
     
-    // 根据当前使用的浏览器选择页面池
-    const currentPagePool = this.currentBrowser === 'browser1' ? this.browser1PagePool : this.browser2PagePool;
-    
     // 查找可用页面
-    const availablePage = currentPagePool.find(p => this.pageStatus.get(p.page) === 'available');
+    const availablePage = this.pagePool.find(p => this.pageStatus.get(p.page) === 'available');
     
     if (availablePage) {
       this.pageStatus.set(availablePage.page, 'in-use');
@@ -170,7 +172,7 @@ class WebScraper {
     });
   }
 
-  // 新增：释放页面回池中
+  // 释放页面回池中
   releasePage(pageObj) {
     const usageCount = this.pageUsageCount.get(pageObj.page) || 0;
     
@@ -192,53 +194,33 @@ class WebScraper {
   }
 
   async cleanupOverusedPages() {
-    // 清理浏览器1的页面池
-    for (let i = this.browser1PagePool.length - 1; i >= 0; i--) {
-      const pageObj = this.browser1PagePool[i];
+    // 清理页面池
+    for (let i = this.pagePool.length - 1; i >= 0; i--) {
+      const pageObj = this.pagePool[i];
       const pageStatus = this.pageStatus.get(pageObj.page);
       
       if (pageStatus === 'retiring') {
-        console.log(`Closing retired page from browser1`);
+        console.log(`Closing retired page`);
         await pageObj.page.close().catch(console.error);
         this.pageUsageCount.delete(pageObj.page);
         this.pageStatus.delete(pageObj.page);
-        this.browser1PagePool.splice(i, 1);
+        this.pagePool.splice(i, 1);
         
         // 如果池中页面太少，创建新页面补充
-        if (this.browser1PagePool.length < 3) {
+        if (this.pagePool.length < 3 && !this.browserRestartInProgress) {
           const newPage = await this.createPageWithProxy(this.browser);
           if (newPage) {
             const newPageObj = { page: newPage, browser: this.browser, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
-            this.browser1PagePool.push(newPageObj);
+            this.pagePool.push(newPageObj);
             this.pageUsageCount.set(newPage, 0);
             this.pageStatus.set(newPage, 'available');
-            console.log('Added new page to browser1 pool');
-          }
-        }
-      }
-    }
-    
-    // 清理浏览器2的页面池
-    for (let i = this.browser2PagePool.length - 1; i >= 0; i--) {
-      const pageObj = this.browser2PagePool[i];
-      const pageStatus = this.pageStatus.get(pageObj.page);
-      
-      if (pageStatus === 'retiring') {
-        console.log(`Closing retired page from browser2`);
-        await pageObj.page.close().catch(console.error);
-        this.pageUsageCount.delete(pageObj.page);
-        this.pageStatus.delete(pageObj.page);
-        this.browser2PagePool.splice(i, 1);
-        
-        // 如果池中页面太少，创建新页面补充
-        if (this.browser2PagePool.length < 3) {
-          const newPage = await this.createPageWithProxy(this.browser2);
-          if (newPage) {
-            const newPageObj = { page: newPage, browser: this.browser2, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
-            this.browser2PagePool.push(newPageObj);
-            this.pageUsageCount.set(newPage, 0);
-            this.pageStatus.set(newPage, 'available');
-            console.log('Added new page to browser2 pool');
+            console.log('Added new page to pool');
+            
+            // 如果有等待的请求，立即分配新页面
+            if (this.waitingQueue.length > 0) {
+              const resolve = this.waitingQueue.shift();
+              resolve(newPageObj);
+            }
           }
         }
       }
@@ -305,63 +287,95 @@ class WebScraper {
     });
   }
 
+  // 新增：重启浏览器的方法，返回一个Promise
+  async restartBrowser() {
+    if (this.browserRestartInProgress) {
+      console.log('Browser restart already in progress, waiting...');
+      return this.restartPromise;
+    }
+    
+    this.browserRestartInProgress = true;
+    console.log(`Starting browser restart...`);
+    
+    // 创建重启Promise
+    this.restartPromise = new Promise(async (resolve, reject) => {
+      try {
+        console.log(`Restarting browser...`);
+        
+        // 关闭所有页面
+        for (const pageObj of this.pagePool) {
+          await pageObj.page.close().catch(console.error);
+          this.pageUsageCount.delete(pageObj.page);
+          this.pageStatus.delete(pageObj.page);
+        }
+        this.pagePool.length = 0;
+        
+        // 关闭浏览器
+        await this.browser.close();
+        
+        // 重新启动浏览器
+        this.browser = await this.initBrowser();
+        
+        // 重新初始化页面池
+        await this.initializePagePool();
+        
+        console.log(`Browser restarted successfully`);
+        this.requestCount = 0;
+        this.browserRestartInProgress = false;
+        this.restartPromise = null;
+        
+        resolve();
+      } catch (error) {
+        console.error('Browser restart failed:', error);
+        this.browserRestartInProgress = false;
+        this.restartPromise = null;
+        reject(error);
+      }
+    });
+    
+    return this.restartPromise;
+  }
+
+  // 修改：检查并重启浏览器，在重启期间将请求放入队列
   async checkAndRestartBrowser() {
     this.requestCount++;
     console.log(`Request count: ${this.requestCount}/${this.maxRequestsBeforeRestart}`);
     
     if (this.requestCount >= this.maxRequestsBeforeRestart && !this.browserRestartInProgress) {
-      this.browserRestartInProgress = true;
-      console.log(`Reached ${this.maxRequestsBeforeRestart} requests, restarting browser...`);
+      console.log(`Reached ${this.maxRequestsBeforeRestart} requests, queuing browser restart...`);
       
-      // 根据当前使用的浏览器决定重启哪个
-      if (this.currentBrowser === 'browser1') {
-        await this.restartBrowser(this.browser, this.browser1PagePool, 'browser1');
-        // 切换到浏览器2
-        this.currentBrowser = 'browser2';
-        console.log('Switched to browser2 for new requests');
-      } else {
-        await this.restartBrowser(this.browser2, this.browser2PagePool, 'browser2');
-        // 切换到浏览器1
-        this.currentBrowser = 'browser1';
-        console.log('Switched to browser1 for new requests');
-      }
-      
-      this.requestCount = 0;
-      this.browserRestartInProgress = false;
-      console.log('Browser restart completed');
+      // 异步执行重启，不阻塞当前请求
+      this.restartBrowser().then(() => {
+        console.log('Browser restart completed, resuming normal operations');
+      }).catch(error => {
+        console.error('Browser restart failed:', error);
+      });
     }
-  }
-
-  async restartBrowser(browser, pagePool, browserName) {
-    console.log(`Restarting ${browserName}...`);
-    
-    // 关闭所有页面
-    for (const pageObj of pagePool) {
-      await pageObj.page.close().catch(console.error);
-      this.pageUsageCount.delete(pageObj.page);
-      this.pageStatus.delete(pageObj.page);
-    }
-    pagePool.length = 0;
-    
-    // 关闭浏览器
-    await browser.close();
-    
-    // 重新启动浏览器
-    const newBrowser = await this.initBrowser();
-    if (browserName === 'browser1') {
-      this.browser = newBrowser;
-    } else {
-      this.browser2 = newBrowser;
-    }
-    
-    // 重新初始化页面池
-    await this.initializeBrowserPagePool(newBrowser, pagePool);
-    
-    console.log(`${browserName} restarted successfully`);
   }
 
   async scrapePage(word, options = {}) {
     const startTime = performance.now();
+    
+    // 如果浏览器正在重启，等待重启完成
+    if (this.browserRestartInProgress && this.restartPromise) {
+      console.log(`Browser restart in progress, waiting for restart to complete for: ${word}`);
+      try {
+        await this.restartPromise;
+        console.log(`Browser restart completed, proceeding with: ${word}`);
+      } catch (error) {
+        console.error(`Browser restart failed for ${word}:`, error);
+        return {
+          success: false,
+          word: word,
+          url: "",
+          error: `Browser restart failed: ${error.message}`,
+          responseTime: 0,
+          timestamp: new Date().toISOString()
+        };
+      }
+    }
+    
+    // 检查是否需要重启（这会在后台触发重启）
     await this.checkAndRestartBrowser();
 
     const {
@@ -380,7 +394,7 @@ class WebScraper {
       const currentUsage = this.pageUsageCount.get(page) || 0;
       this.pageUsageCount.set(page, currentUsage + 1);
       
-      console.log(`Using page from ${this.currentBrowser} (used ${currentUsage + 1}/${this.maxPageUsage} times) for: ${word}`);
+      console.log(`Using page (used ${currentUsage + 1}/${this.maxPageUsage} times) for: ${word}`);
 
       // 清除搜索框并输入新关键词
       const searchBoxSelector = 'textarea[name="q"], input[name="q"]';
@@ -482,14 +496,10 @@ class WebScraper {
     this.waitingQueue = [];
     
     // 关闭所有页面
-    for (const pageObj of this.browser1PagePool) {
+    for (const pageObj of this.pagePool) {
       await pageObj.page.close().catch(console.error);
     }
-    for (const pageObj of this.browser2PagePool) {
-      await pageObj.page.close().catch(console.error);
-    }
-    this.browser1PagePool = [];
-    this.browser2PagePool = [];
+    this.pagePool = [];
     this.pageUsageCount.clear();
     this.pageStatus.clear();
     
@@ -497,10 +507,6 @@ class WebScraper {
       await this.browser.close();
       this.isInitialized = false;
       console.log('Browser closed');
-    }
-    if (this.browser2) {
-      await this.browser2.close();
-      console.log('Browser2 closed');
     }
   }
 
@@ -527,23 +533,13 @@ class WebScraper {
 
   // 获取当前状态信息
   getStatus() {
-    const browser1Available = this.browser1PagePool.filter(p => this.pageStatus.get(p.page) === 'available').length;
-    const browser2Available = this.browser2PagePool.filter(p => this.pageStatus.get(p.page) === 'available').length;
-    const browser1InUse = this.browser1PagePool.filter(p => this.pageStatus.get(p.page) === 'in-use').length;
-    const browser2InUse = this.browser2PagePool.filter(p => this.pageStatus.get(p.page) === 'in-use').length;
+    const available = this.pagePool.filter(p => this.pageStatus.get(p.page) === 'available').length;
+    const inUse = this.pagePool.filter(p => this.pageStatus.get(p.page) === 'in-use').length;
     
     return {
-      currentBrowser: this.currentBrowser,
-      browser1Pages: {
-        total: this.browser1PagePool.length,
-        available: browser1Available,
-        inUse: browser1InUse
-      },
-      browser2Pages: {
-        total: this.browser2PagePool.length,
-        available: browser2Available,
-        inUse: browser2InUse
-      },
+      totalPages: this.pagePool.length,
+      available: available,
+      inUse: inUse,
       waitingQueue: this.waitingQueue.length,
       requestCount: this.requestCount,
       maxRequestsBeforeRestart: this.maxRequestsBeforeRestart,
