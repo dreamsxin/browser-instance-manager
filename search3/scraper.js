@@ -564,7 +564,7 @@ class WebScraper {
       }
 
       const requestId = word;
-      fs.appendFileSync(
+      fs.appendFile(
         outputDir + "/" + requestId + ".html",
         content + "\r\n",
         "utf8",
