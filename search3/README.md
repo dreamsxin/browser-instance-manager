@@ -181,3 +181,28 @@ async function runTest() {
 
 runTest();
 ```
+
+## 其他运行参数
+
+现在你可以通过以下方式指定配置参数：
+
+### 1. 命令行参数
+```bash
+node server.js --max-requests=500 --max-page-usage=30 --initial-page-pool=10 --max-concurrent=30
+```
+
+### 2. 环境变量
+```bash
+export MAX_REQUESTS_BEFORE_RESTART=1000
+export MAX_PAGE_USAGE=30
+export INITIAL_PAGE_POOL_SIZE=10
+export MAX_CONCURRENT=50
+node server.js
+```
+
+### 3. 混合使用（命令行参数优先）
+```bash
+export MAX_REQUESTS_BEFORE_RESTART=800
+export INITIAL_PAGE_POOL_SIZE=8
+node server.js --max-page-usage=25 --max-concurrent=40
+```

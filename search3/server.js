@@ -7,13 +7,37 @@ const ConcurrencyController = require('./concurrency');
 class ScrapingServer {
   constructor() {
     this.app = express();
-    this.scraper = new WebScraper();
-    this.concurrencyController = new ConcurrencyController(35); // 默认并发数3
+    
+    // 从命令行参数或环境变量获取配置
+    const maxRequestsBeforeRestart = parseInt(process.argv.find(arg => arg.startsWith('--max-requests='))?.split('=')[1]) || 
+                                    parseInt(process.env.MAX_REQUESTS_BEFORE_RESTART) || 500;
+    const maxPageUsage = parseInt(process.argv.find(arg => arg.startsWith('--max-page-usage='))?.split('=')[1]) || 
+                         parseInt(process.env.MAX_PAGE_USAGE) || 20;
+    const initialPagePoolSize = parseInt(process.argv.find(arg => arg.startsWith('--initial-page-pool='))?.split('=')[1]) || 
+                               parseInt(process.env.INITIAL_PAGE_POOL_SIZE) || 5;
+    const maxConcurrent = parseInt(process.argv.find(arg => arg.startsWith('--max-concurrent='))?.split('=')[1]) || 
+                         parseInt(process.env.MAX_CONCURRENT) || 35;
+    
+    // 创建 scraper 实例并传入配置
+    this.scraper = new WebScraper({
+      maxRequestsBeforeRestart,
+      maxPageUsage,
+      initialPagePoolSize
+    });
+    
+    this.concurrencyController = new ConcurrencyController(maxConcurrent);
     this.port = process.env.PORT || 3000;
     
     this.setupMiddleware();
     this.setupRoutes();
     this.setupErrorHandling();
+
+    console.log(`Server initialized with configuration:
+  - Port: ${this.port}
+  - Max Concurrent: ${maxConcurrent}
+  - Max Requests Before Restart: ${maxRequestsBeforeRestart}
+  - Max Page Usage: ${maxPageUsage}
+  - Initial Page Pool Size: ${initialPagePoolSize}`);
   }
 
   setupMiddleware() {
@@ -26,10 +50,12 @@ class ScrapingServer {
   setupRoutes() {
     // 健康检查端点
     this.app.get('/health', (req, res) => {
+      const scraperStatus = this.scraper.getStatus();
       res.json({ 
         status: 'OK', 
         timestamp: new Date().toISOString(),
-        concurrency: this.concurrencyController.getStats()
+        concurrency: this.concurrencyController.getStats(),
+        scraper: scraperStatus
       });
     });
 
@@ -103,7 +129,7 @@ class ScrapingServer {
           } else {
             return {
               success: false,
-              url: urls[index],
+              word: words[index],
               error: result.reason.message,
               timestamp: new Date().toISOString()
             };
@@ -112,7 +138,7 @@ class ScrapingServer {
 
         res.json({
           success: true,
-          total: urls.length,
+          total: words.length,
           results: formattedResults
         });
 
@@ -126,6 +152,40 @@ class ScrapingServer {
       }
     });
 
+    // 手动重启端点
+    this.app.post('/restart-browser', async (req, res) => {
+      try {
+        console.log('Manual browser restart requested');
+        
+        const result = await this.scraper.restartBrowser();
+        
+        res.json({
+          success: true,
+          message: 'Browser restarted successfully',
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error('Manual browser restart failed:', error);
+        res.status(500).json({
+          success: false,
+          error: 'Browser restart failed',
+          message: error.message
+        });
+      }
+    });
+
+    // 配置信息端点
+    this.app.get('/config', (req, res) => {
+      const scraperStatus = this.scraper.getStatus();
+      res.json({
+        maxConcurrent: this.concurrencyController.maxConcurrent,
+        maxRequestsBeforeRestart: scraperStatus.maxRequestsBeforeRestart,
+        maxPageUsage: scraperStatus.maxPageUsage,
+        initialPagePoolSize: scraperStatus.initialPagePoolSize,
+        port: this.port
+      });
+    });
+
     // 并发控制管理端点
     this.app.get('/concurrency', (req, res) => {
       res.json(this.concurrencyController.getStats());
@@ -134,9 +194,9 @@ class ScrapingServer {
     this.app.put('/concurrency', (req, res) => {
       const { maxConcurrent } = req.body;
       
-      if (typeof maxConcurrent !== 'number' || maxConcurrent < 1 || maxConcurrent > 10) {
+      if (typeof maxConcurrent !== 'number' || maxConcurrent < 1 || maxConcurrent > 100) {
         return res.status(400).json({
-          error: 'maxConcurrent must be a number between 1 and 10'
+          error: 'maxConcurrent must be a number between 1 and 100'
         });
       }
 
@@ -177,7 +237,11 @@ class ScrapingServer {
       this.server = this.app.listen(this.port, () => {
         console.log(`🚀 Web Scraping Server running on port ${this.port}`);
         console.log(`📊 Max concurrent requests: ${this.concurrencyController.maxConcurrent}`);
+        console.log(`🔄 Max requests before restart: ${this.scraper.maxRequestsBeforeRestart}`);
+        console.log(`📄 Max page usage: ${this.scraper.maxPageUsage}`);
+        console.log(`🔄 Initial page pool size: ${this.scraper.initialPagePoolSize}`);
         console.log(`🔗 Health check: http://localhost:${this.port}/health`);
+        console.log(`🔄 Manual restart: POST http://localhost:${this.port}/restart-browser`);
       });
 
       // 优雅关闭

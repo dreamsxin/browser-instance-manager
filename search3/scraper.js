@@ -5,25 +5,36 @@ const ProxyChain = require("proxy-chain");
 const { performance } = require('perf_hooks');
 
 class WebScraper {
-  constructor() {
+  constructor(options = {}) {
+    // 从选项或命令行参数获取配置
+    this.maxRequestsBeforeRestart = options.maxRequestsBeforeRestart || 
+                                   parseInt(process.env.MAX_REQUESTS_BEFORE_RESTART) || 500;
+    this.maxPageUsage = options.maxPageUsage || 
+                       parseInt(process.env.MAX_PAGE_USAGE) || 20;
+    this.initialPagePoolSize = options.initialPagePoolSize || 
+                              parseInt(process.env.INITIAL_PAGE_POOL_SIZE) || 5;
+    
     this.browser = null;
     this.isInitialized = false;
     this.requestCount = 0;
-    this.maxRequestsBeforeRestart = 500;
     
     // 单个浏览器的页面池
     this.pagePool = [];
     this.pageUsageCount = new Map();
-    this.maxPageUsage = 20;
     
     // 等待队列和页面状态管理
     this.waitingQueue = [];
     this.pageStatus = new Map(); // 记录页面状态: 'available', 'in-use', 'retiring'
     this.browserRestartInProgress = false;
     
-    // 新增：重启期间的请求队列
+    // 重启期间的请求队列
     this.restartQueue = [];
     this.restartPromise = null;
+
+    console.log(`WebScraper initialized with:
+  - maxRequestsBeforeRestart: ${this.maxRequestsBeforeRestart}
+  - maxPageUsage: ${this.maxPageUsage}
+  - initialPagePoolSize: ${this.initialPagePoolSize}`);
   }
 
   async initBrowser() {
@@ -77,8 +88,8 @@ class WebScraper {
   }
 
   async initializePagePool() {
-    // 创建5个页面
-    for (let i = 0; i < 6; i++) {
+    // 使用配置的页面池大小创建页面
+    for (let i = 0; i < this.initialPagePoolSize; i++) {
       const page = await this.createPageWithProxy(this.browser);
       if (page) {
         const pageObj = { page, browser: this.browser, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
@@ -87,7 +98,7 @@ class WebScraper {
         this.pageStatus.set(page, 'available');
       }
     }
-    console.log(`Page pool initialized with ${this.pagePool.length} pages`);
+    console.log(`Page pool initialized with ${this.pagePool.length} pages (target: ${this.initialPagePoolSize})`);
   }
 
   async createPageWithProxy(browser) {
@@ -207,7 +218,8 @@ class WebScraper {
         this.pagePool.splice(i, 1);
         
         // 如果池中页面太少，创建新页面补充
-        if (this.pagePool.length < 3 && !this.browserRestartInProgress) {
+        const minPoolSize = Math.floor(this.initialPagePoolSize / 2);
+        if (this.pagePool.length < minPoolSize && !this.browserRestartInProgress) {
           const newPage = await this.createPageWithProxy(this.browser);
           if (newPage) {
             const newPageObj = { page: newPage, browser: this.browser, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
@@ -287,7 +299,28 @@ class WebScraper {
     });
   }
 
-  // 新增：重启浏览器的方法，返回一个Promise
+  // 等待所有页面完成当前任务
+  async waitForAllPagesToComplete(timeoutMs = 30000) {
+    console.log('Waiting for all pages to complete current tasks...');
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeoutMs) {
+      const inUsePages = this.pagePool.filter(p => this.pageStatus.get(p.page) === 'in-use');
+      
+      if (inUsePages.length === 0) {
+        console.log('All pages have completed their tasks');
+        return true;
+      }
+      
+      console.log(`Waiting for ${inUsePages.length} pages to complete...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    console.log(`Timeout reached, but ${this.pagePool.filter(p => this.pageStatus.get(p.page) === 'in-use').length} pages are still in use`);
+    return false;
+  }
+
+  // 重启浏览器的方法，返回一个Promise
   async restartBrowser() {
     if (this.browserRestartInProgress) {
       console.log('Browser restart already in progress, waiting...');
@@ -300,6 +333,15 @@ class WebScraper {
     // 创建重启Promise
     this.restartPromise = new Promise(async (resolve, reject) => {
       try {
+        console.log(`Waiting for all pages to complete current tasks before restart...`);
+        
+        // 等待所有页面完成当前任务
+        const allCompleted = await this.waitForAllPagesToComplete();
+        
+        if (!allCompleted) {
+          console.log('Some pages did not complete in time, proceeding with restart anyway');
+        }
+        
         console.log(`Restarting browser...`);
         
         // 关闭所有页面
@@ -336,7 +378,7 @@ class WebScraper {
     return this.restartPromise;
   }
 
-  // 修改：检查并重启浏览器，在重启期间将请求放入队列
+  // 检查并重启浏览器，在重启期间将请求放入队列
   async checkAndRestartBrowser() {
     this.requestCount++;
     console.log(`Request count: ${this.requestCount}/${this.maxRequestsBeforeRestart}`);
@@ -543,6 +585,8 @@ class WebScraper {
       waitingQueue: this.waitingQueue.length,
       requestCount: this.requestCount,
       maxRequestsBeforeRestart: this.maxRequestsBeforeRestart,
+      maxPageUsage: this.maxPageUsage,
+      initialPagePoolSize: this.initialPagePoolSize,
       browserRestartInProgress: this.browserRestartInProgress
     };
   }
