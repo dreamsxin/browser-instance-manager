@@ -21,6 +21,10 @@ class WebScraper {
     // 当前使用的浏览器标识
     this.currentBrowser = 'browser1';
     this.browserRestartInProgress = false;
+    
+    // 新增：等待队列和页面状态管理
+    this.waitingQueue = [];
+    this.pageStatus = new Map(); // 记录页面状态: 'available', 'in-use', 'retiring'
   }
 
   async initBrowser() {
@@ -80,8 +84,10 @@ class WebScraper {
     for (let i = 0; i < 5; i++) {
       const page = await this.createPageWithProxy(browser);
       if (page) {
-        pagePool.push({ page, browser, lastUsed: Date.now() });
+        const pageObj = { page, browser, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
+        pagePool.push(pageObj);
         this.pageUsageCount.set(page, 0);
+        this.pageStatus.set(page, 'available');
       }
     }
     console.log(`Browser page pool initialized with ${pagePool.length} pages`);
@@ -140,79 +146,101 @@ class WebScraper {
     }
   }
 
+  // 新增：获取可用页面的方法，支持等待队列
   async getAvailablePage() {
     // 清理使用次数过多的页面
     await this.cleanupOverusedPages();
     
     // 根据当前使用的浏览器选择页面池
     const currentPagePool = this.currentBrowser === 'browser1' ? this.browser1PagePool : this.browser2PagePool;
-    const availablePages = currentPagePool.filter(p => !p.inUse);
     
-    if (availablePages.length === 0) {
-      // 如果没有可用页面，尝试从另一个浏览器的页面池获取
-      const alternatePagePool = this.currentBrowser === 'browser1' ? this.browser2PagePool : this.browser1PagePool;
-      const alternateAvailablePages = alternatePagePool.filter(p => !p.inUse);
-      
-      if (alternateAvailablePages.length > 0) {
-        console.log(`Switching to ${this.currentBrowser === 'browser1' ? 'browser2' : 'browser1'} due to no available pages in current browser`);
-        this.currentBrowser = this.currentBrowser === 'browser1' ? 'browser2' : 'browser1';
-        const selectedPage = alternateAvailablePages[0];
-        selectedPage.inUse = true;
-        selectedPage.lastUsed = Date.now();
-        return selectedPage;
-      }
-      
-      // 如果两个浏览器都没有可用页面，创建新的
-      const currentBrowser = this.currentBrowser === 'browser1' ? this.browser : this.browser2;
-      const newPage = await this.createPageWithProxy(currentBrowser);
-      if (newPage) {
-        const pageObj = { page: newPage, browser: currentBrowser, lastUsed: Date.now() };
-        currentPagePool.push(pageObj);
-        this.pageUsageCount.set(newPage, 0);
-        pageObj.inUse = true;
-        return pageObj;
-      }
-      throw new Error('No available pages and failed to create new page');
+    // 查找可用页面
+    const availablePage = currentPagePool.find(p => this.pageStatus.get(p.page) === 'available');
+    
+    if (availablePage) {
+      this.pageStatus.set(availablePage.page, 'in-use');
+      availablePage.lastUsed = Date.now();
+      return availablePage;
     }
     
-    // 返回使用次数最少的页面
-    availablePages.sort((a, b) => {
-      const countA = this.pageUsageCount.get(a.page) || 0;
-      const countB = this.pageUsageCount.get(b.page) || 0;
-      return countA - countB;
+    // 如果没有可用页面，等待直到有页面可用
+    console.log('No available pages, waiting...');
+    return new Promise((resolve) => {
+      this.waitingQueue.push(resolve);
     });
+  }
+
+  // 新增：释放页面回池中
+  releasePage(pageObj) {
+    const usageCount = this.pageUsageCount.get(pageObj.page) || 0;
     
-    const selectedPage = availablePages[0];
-    selectedPage.inUse = true;
-    selectedPage.lastUsed = Date.now();
-    
-    return selectedPage;
+    if (usageCount >= this.maxPageUsage) {
+      // 页面使用次数达到上限，标记为待退休
+      this.pageStatus.set(pageObj.page, 'retiring');
+      console.log(`Page marked for retirement (used ${usageCount} times)`);
+    } else {
+      // 重置页面状态为可用
+      this.pageStatus.set(pageObj.page, 'available');
+      pageObj.lastUsed = Date.now();
+      
+      // 检查是否有等待的请求
+      if (this.waitingQueue.length > 0) {
+        const resolve = this.waitingQueue.shift();
+        resolve(pageObj);
+      }
+    }
   }
 
   async cleanupOverusedPages() {
     // 清理浏览器1的页面池
     for (let i = this.browser1PagePool.length - 1; i >= 0; i--) {
       const pageObj = this.browser1PagePool[i];
-      const usageCount = this.pageUsageCount.get(pageObj.page) || 0;
+      const pageStatus = this.pageStatus.get(pageObj.page);
       
-      if (usageCount >= this.maxPageUsage && !pageObj.inUse) {
-        console.log(`Closing overused page from browser1 (used ${usageCount} times)`);
+      if (pageStatus === 'retiring') {
+        console.log(`Closing retired page from browser1`);
         await pageObj.page.close().catch(console.error);
         this.pageUsageCount.delete(pageObj.page);
+        this.pageStatus.delete(pageObj.page);
         this.browser1PagePool.splice(i, 1);
+        
+        // 如果池中页面太少，创建新页面补充
+        if (this.browser1PagePool.length < 3) {
+          const newPage = await this.createPageWithProxy(this.browser);
+          if (newPage) {
+            const newPageObj = { page: newPage, browser: this.browser, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
+            this.browser1PagePool.push(newPageObj);
+            this.pageUsageCount.set(newPage, 0);
+            this.pageStatus.set(newPage, 'available');
+            console.log('Added new page to browser1 pool');
+          }
+        }
       }
     }
     
     // 清理浏览器2的页面池
     for (let i = this.browser2PagePool.length - 1; i >= 0; i--) {
       const pageObj = this.browser2PagePool[i];
-      const usageCount = this.pageUsageCount.get(pageObj.page) || 0;
+      const pageStatus = this.pageStatus.get(pageObj.page);
       
-      if (usageCount >= this.maxPageUsage && !pageObj.inUse) {
-        console.log(`Closing overused page from browser2 (used ${usageCount} times)`);
+      if (pageStatus === 'retiring') {
+        console.log(`Closing retired page from browser2`);
         await pageObj.page.close().catch(console.error);
         this.pageUsageCount.delete(pageObj.page);
+        this.pageStatus.delete(pageObj.page);
         this.browser2PagePool.splice(i, 1);
+        
+        // 如果池中页面太少，创建新页面补充
+        if (this.browser2PagePool.length < 3) {
+          const newPage = await this.createPageWithProxy(this.browser2);
+          if (newPage) {
+            const newPageObj = { page: newPage, browser: this.browser2, lastUsed: Date.now(), id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}` };
+            this.browser2PagePool.push(newPageObj);
+            this.pageUsageCount.set(newPage, 0);
+            this.pageStatus.set(newPage, 'available');
+            console.log('Added new page to browser2 pool');
+          }
+        }
       }
     }
   }
@@ -231,7 +259,7 @@ class WebScraper {
         route.abort();
         return;
       }
-      if (route.request().url().includes('google.com//client_')) {
+      if (route.request().url().includes('google.com/client_')) {
         route.abort();
         return;
       }
@@ -311,6 +339,7 @@ class WebScraper {
     for (const pageObj of pagePool) {
       await pageObj.page.close().catch(console.error);
       this.pageUsageCount.delete(pageObj.page);
+      this.pageStatus.delete(pageObj.page);
     }
     pagePool.length = 0;
     
@@ -343,7 +372,7 @@ class WebScraper {
     let pageObj = null;
     
     try {
-      // 从页面池获取可用页面
+      // 从页面池获取可用页面（可能会等待）
       pageObj = await this.getAvailablePage();
       const page = pageObj.page;
       
@@ -357,7 +386,7 @@ class WebScraper {
       const searchBoxSelector = 'textarea[name="q"], input[name="q"]';
       try {
         await page.waitForSelector(searchBoxSelector, { timeout: 3000, state: 'visible' });
-        await page.fill(searchBoxSelector, '');
+        //await page.fill(searchBoxSelector, '');
         await page.fill(searchBoxSelector, word);
         await page.keyboard.press("Enter");
       } catch (error) {
@@ -443,12 +472,15 @@ class WebScraper {
     } finally {
       // 释放页面回池中
       if (pageObj) {
-        pageObj.inUse = false;
+        this.releasePage(pageObj);
       }
     }
   }
 
   async close() {
+    // 清空等待队列
+    this.waitingQueue = [];
+    
     // 关闭所有页面
     for (const pageObj of this.browser1PagePool) {
       await pageObj.page.close().catch(console.error);
@@ -459,6 +491,7 @@ class WebScraper {
     this.browser1PagePool = [];
     this.browser2PagePool = [];
     this.pageUsageCount.clear();
+    this.pageStatus.clear();
     
     if (this.browser) {
       await this.browser.close();
@@ -494,10 +527,24 @@ class WebScraper {
 
   // 获取当前状态信息
   getStatus() {
+    const browser1Available = this.browser1PagePool.filter(p => this.pageStatus.get(p.page) === 'available').length;
+    const browser2Available = this.browser2PagePool.filter(p => this.pageStatus.get(p.page) === 'available').length;
+    const browser1InUse = this.browser1PagePool.filter(p => this.pageStatus.get(p.page) === 'in-use').length;
+    const browser2InUse = this.browser2PagePool.filter(p => this.pageStatus.get(p.page) === 'in-use').length;
+    
     return {
       currentBrowser: this.currentBrowser,
-      browser1Pages: this.browser1PagePool.length,
-      browser2Pages: this.browser2PagePool.length,
+      browser1Pages: {
+        total: this.browser1PagePool.length,
+        available: browser1Available,
+        inUse: browser1InUse
+      },
+      browser2Pages: {
+        total: this.browser2PagePool.length,
+        available: browser2Available,
+        inUse: browser2InUse
+      },
+      waitingQueue: this.waitingQueue.length,
       requestCount: this.requestCount,
       maxRequestsBeforeRestart: this.maxRequestsBeforeRestart,
       browserRestartInProgress: this.browserRestartInProgress
