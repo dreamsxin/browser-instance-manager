@@ -57,9 +57,9 @@ class SearchApiTester {
             const response = await axios.get(`${this.baseURL}/google/search`, {
                 params: { keyword },
                 timeout: 30000,
-                validateStatus: function (status) {
-                    return status < 500;
-                }
+                // validateStatus: function (status) {
+                //     return status < 500;
+                // }
             });
 
             const endTime = performance.now();
@@ -82,7 +82,7 @@ class SearchApiTester {
                 if (!response.data?.dataLength < 10000) {
                     this.results.dataException++;
                 }
-                fs.writeFileSync('testsuccess.txt', JSON.stringify(response.data, null, 2), 'utf8', (err) => {
+                fs.writeFileSync('testsuccess.txt', JSON.stringify(response.data, null, 2)+"\r\n", 'utf8', (err) => {
                     if (err) {
                         throw new Error('追加内容时发生错误');
                     }
@@ -98,7 +98,7 @@ class SearchApiTester {
                     keyword,
                     timestamp: Date.now()
                 });
-                fs.writeFileSync('testfailed.txt', JSON.stringify(response.data, null, 2), 'utf8', (err) => {
+                fs.appendFileSync('testfailed.txt', JSON.stringify(response.data, null, 2)+"\r\n", 'utf8', (err) => {
                     if (err) {
                         throw new Error('追加内容时发生错误');
                     }
@@ -122,7 +122,7 @@ class SearchApiTester {
 
             const errorMsg = error.code === 'ECONNABORTED' ? '请求超时' : error.message;
 
-            fs.appendFileSync('testfailed.txt', errorMsg, 'utf8', (err) => {
+            fs.appendFileSync('testfailed.txt', errorMsg+"\r\n", 'utf8', (err) => {
                 if (err) {
                     throw new Error('追加内容时发生错误');
                 }

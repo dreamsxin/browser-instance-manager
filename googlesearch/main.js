@@ -24,7 +24,7 @@ class GoogleSearchService {
             console.log('正在启动浏览器...');
 
             // 32位整数作为指纹种子
-            const fingerprintSeed = 1110;//Math.floor(Math.random() * 100000);
+            const fingerprintSeed = 3211;//Math.floor(Math.random() * 100000);
             //const fingerprintSeed = 1000;//Math.floor(Math.random() * 100000);
 
             // 指定插件目录的路径
@@ -57,26 +57,6 @@ class GoogleSearchService {
                 ]
             });
 
-            // 根据代理数量创建页面
-            if (proxies.length === 0) {
-                const context = await this.browser.newContext();
-                const page = await context.newPage();
-                this.pages.push({ page, context, proxy: null });
-                console.log('创建了 1 个默认页面');
-            } else {
-                for (const proxy of proxies) {
-                    const newProxyUrl = await ProxyChain.anonymizeProxy(proxy);
-                    const context = await this.browser.newContext({
-                        proxy: {
-                            server: newProxyUrl
-                        }
-                    });
-                    const page = await context.newPage();
-                    this.pages.push({ page, context, proxy, newProxyUrl });
-                    console.log(`为代理 ${proxy} 创建页面`);
-                }
-            }
-
             this.isInitialized = true;
             console.log(`初始化完成，共创建 ${this.pages.length} 个页面`);
 
@@ -89,37 +69,30 @@ class GoogleSearchService {
         }
     }
 
-    async startDataCollection() {
+    async startDataCollection(proxies) {
         while (this.isInitialized) {
-            const promises = [];
-            for (const pageInfo of this.pages) {
-                // 判断页面是否异常关闭
-                if (pageInfo.page.isClosed()) {
-                    console.log(`页面 ${pageInfo.proxy ? pageInfo.proxy : '无代理'} 已关闭，重新创建页面`);
-                    await ProxyChain.closeAnonymizedProxy(pageInfo.newProxyUrl, true);
-                    const newProxyUrl = await ProxyChain.anonymizeProxy(pageInfo.proxy);
-                    const context = await this.browser.newContext({
-                        proxy: {
-                            server: newProxyUrl
-                        }
-                    });
-                    const page = await context.newPage();
-                    pageInfo.page = page;
-                    pageInfo.context = context;
-                    pageInfo.newProxyUrl = newProxyUrl;
+            var promises = [];
+
+            for (const proxy of proxies) {
+                const dataItem = this.dataQueue.get(proxy);
+                if (dataItem && dataItem.useCount < 30) {
+                    continue;
                 }
+
                 try {
-                    //await this.captureGoogleData(pageInfo);
-                    promises.push(this.captureGoogleData(pageInfo));
-                    await this.delay(1000 + Math.random() * 1000);
+                    //await this.captureGoogleData(proxy);
+                    promises.push(this.captureGoogleData(proxy));
                 } catch (error) {
                     console.error(`数据采集失败 (代理: ${proxy ? proxy.server : '无代理'}):`, error);
-
+                }
+                if (promises.length >= 5) {
+                    await Promise.allSettled(promises);
+                    promises = [];
                 }
             }
-            await Promise.allSettled(promises);
             // 等待一段时间后继续采集
-            await this.delay(15000 + Math.random() * 5000);
+            await Promise.allSettled(promises);
+            await this.delay(1000 + Math.random() * 5000);
         }
     }
 
@@ -139,8 +112,14 @@ class GoogleSearchService {
         await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
-    async captureGoogleData(pageInfo) {
-        const { page, proxy } = pageInfo;
+    async captureGoogleData(proxy) {
+        const newProxyUrl = await ProxyChain.anonymizeProxy(proxy);
+        const context = await this.browser.newContext({
+            proxy: {
+                server: newProxyUrl
+            }
+        });
+        const page = await context.newPage();
         try {
             console.log('正在访问 Google...');
 
@@ -188,93 +167,93 @@ class GoogleSearchService {
             console.log(`数据采集完成，队列大小: ${this.dataQueue.size}, 最大使用次数: ${maxUseCount}, proxy: ${proxy}`);
 
             // 随机点击搜索结果 - 修复新页面问题
-            const allLinks = await page.$$("a h3");
-            const visibleLinks = [];
+            // const allLinks = await page.$$("a h3");
+            // const visibleLinks = [];
 
-            for (const link of allLinks) {
-                const isVisible = await link.isVisible();
-                if (isVisible) {
-                    visibleLinks.push(link);
-                }
-            }
-            if (visibleLinks.length > 0 && Math.random() > 0.5) {
-                try {
-                    const randomIndex = Math.floor(Math.random() * visibleLinks.length);
-                    const randomLink = visibleLinks[randomIndex];
+            // for (const link of allLinks) {
+            //     const isVisible = await link.isVisible();
+            //     if (isVisible) {
+            //         visibleLinks.push(link);
+            //     }
+            // }
+            // if (visibleLinks.length > 0 && Math.random() > 0.5) {
+            //     try {
+            //         const randomIndex = Math.floor(Math.random() * visibleLinks.length);
+            //         const randomLink = visibleLinks[randomIndex];
 
-                    console.log(
-                        `🔗 随机点击第${randomIndex + 1}个结果`
-                    );
+            //         console.log(
+            //             `🔗 随机点击第${randomIndex + 1}个结果`
+            //         );
 
-                    await randomLink.scrollIntoViewIfNeeded();
-                    await this.humanDelay(1000, 2000);
+            //         await randomLink.scrollIntoViewIfNeeded();
+            //         await this.humanDelay(1000, 2000);
 
-                    // 监听新页面打开事件
-                    const newPagePromise = page.context().waitForEvent("page", { timeout: 5000 })
-                        .catch(() => null); // 超时表示没有新页面打开
+            //         // 监听新页面打开事件
+            //         const newPagePromise = page.context().waitForEvent("page", { timeout: 5000 })
+            //             .catch(() => null); // 超时表示没有新页面打开
 
-                    // 点击链接
-                    await randomLink.click({ delay: 100 });
+            //         // 点击链接
+            //         await randomLink.click({ delay: 100 });
 
-                    // 等待可能的新页面
-                    const newPage = await newPagePromise;
+            //         // 等待可能的新页面
+            //         const newPage = await newPagePromise;
 
-                    if (newPage) {
-                        try {
-                            console.log(
-                                `🆕 检测到新页面打开，等待加载...`
-                            );
+            //         if (newPage) {
+            //             try {
+            //                 console.log(
+            //                     `🆕 检测到新页面打开，等待加载...`
+            //                 );
 
-                            // 等待新页面加载
-                            await newPage.waitForLoadState("domcontentloaded");
+            //                 // 等待新页面加载
+            //                 await newPage.waitForLoadState("domcontentloaded");
 
-                            await this.humanDelay(1000, 2000);
+            //                 await this.humanDelay(1000, 2000);
 
-                            // 关闭新页面
-                            console.log(`❌ 关闭新打开的页面`);
-                            await newPage.close();
+            //                 // 关闭新页面
+            //                 console.log(`❌ 关闭新打开的页面`);
+            //                 await newPage.close();
 
-                            // 确保我们仍然在原始页面
-                            if (page.isClosed()) {
-                                console.log(
-                                    `⚠️ 原始页面已关闭，需要重新创建`
-                                );
-                                throw new Error("原始页面在点击后关闭");
-                            }
-                        } catch (error) {
-                            console.error(`❌ 关闭新页面时出错:`, error);
-                        } finally {
-                            newPage.close();
-                        }
-                    } else {
-                        // 没有新页面打开，在当前页面导航
-                        console.log(
-                            `🔙 在当前页面打开链接，等待加载后返回`
-                        );
+            //                 // 确保我们仍然在原始页面
+            //                 if (page.isClosed()) {
+            //                     console.log(
+            //                         `⚠️ 原始页面已关闭，需要重新创建`
+            //                     );
+            //                     throw new Error("原始页面在点击后关闭");
+            //                 }
+            //             } catch (error) {
+            //                 console.error(`❌ 关闭新页面时出错:`, error);
+            //             } finally {
+            //                 newPage.close();
+            //             }
+            //         } else {
+            //             // 没有新页面打开，在当前页面导航
+            //             console.log(
+            //                 `🔙 在当前页面打开链接，等待加载后返回`
+            //             );
 
-                        // 等待页面加载
-                        await page.waitForLoadState("domcontentloaded");
-                        await this.humanDelay(2000, 4000);
+            //             // 等待页面加载
+            //             await page.waitForLoadState("domcontentloaded");
+            //             await this.humanDelay(2000, 4000);
 
-                        // 返回搜索结果页
-                        await page.goBack({ waitUntil: "domcontentloaded" });
-                        const currentUrl = await page.url();
-                        // 判断是否是谷歌搜索结果页
-                        if (currentUrl.includes("google.com/search")) {
-                            console.log(`✅ 新页面是谷歌搜索结果页`);
-                        } else {
-                            console.log(`⚠️ 新页面不是谷歌搜索结果页`);
-                            // 访问Google
-                            await page.goto("https://www.google.com", {
-                                waitUntil: "domcontentloaded",
-                                timeout: 30000,
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.error('点击出错:', error);
-                }
-            }
+            //             // 返回搜索结果页
+            //             await page.goBack({ waitUntil: "domcontentloaded" });
+            //             const currentUrl = await page.url();
+            //             // 判断是否是谷歌搜索结果页
+            //             if (currentUrl.includes("google.com/search")) {
+            //                 console.log(`✅ 新页面是谷歌搜索结果页`);
+            //             } else {
+            //                 console.log(`⚠️ 新页面不是谷歌搜索结果页`);
+            //                 // 访问Google
+            //                 await page.goto("https://www.google.com", {
+            //                     waitUntil: "domcontentloaded",
+            //                     timeout: 30000,
+            //                 });
+            //             }
+            //         }
+            //     } catch (error) {
+            //         console.error('点击出错:', error);
+            //     }
+            // }
 
             return {
                 url,
@@ -284,8 +263,10 @@ class GoogleSearchService {
             };
 
         } catch (error) {
-            await pageInfo.page.close();
             console.error('捕获 Google 数据时出错:', error);
+        } finally {
+            await page.close();
+            await ProxyChain.closeAnonymizedProxy(proxy, true);
         }
 
     }
@@ -312,7 +293,7 @@ class GoogleSearchService {
         const availableData = [];
         for (let [proxy, dataItem] of this.dataQueue) {
             //if (dataItem.useCount < dataItem.maxUseCount) {
-                availableData.push(dataItem);
+            availableData.push(dataItem);
             //}
         }
 
@@ -365,7 +346,7 @@ class GoogleSearchService {
                 },
                 followRedirect: false, // 手动处理重定向
                 responseType: 'text',
-                //throwHttpErrors: false, // 不抛出HTTP错误
+                throwHttpErrors: false, // 不抛出HTTP错误
             };
 
             //console.log(headers);
@@ -407,7 +388,7 @@ class GoogleSearchService {
         } catch (error) {
             console.error('请求失败:', error.message);
             searchData.useCount = searchData.maxUseCount;
-            throw error;
+            return result;
         }
     }
     async delay(ms) {
@@ -463,31 +444,16 @@ async function initializeService() {
             'http://tVr7SpSb6L:7Ghj4j9an6@38.207.100.164:5206',
             'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.175:5206',
             'http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.188:5206',
-            // 'http://mSV6YJemvL:jqPxPczwth@45.10.210.81:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.102.166:5206',
-            // 'http://mSV6YJemvL:jqPxPczwth@83.150.224.201:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.164:5206',
-            // 'http://mSV6YJemvL:jqPxPczwth@45.9.110.218:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.100.185:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.176:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.169:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.163:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.182:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.182:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.163:5206',
-            // 'http://mSV6YJemvL:jqPxPczwth@45.10.210.104:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.166:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.167:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.183:5206',
-            // 'http://mSV6YJemvL:jqPxPczwth@45.9.110.208:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.190:5206',
-            // 'http://mSV6YJemvL:jqPxPczwth@45.142.76.235:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.104.173:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.163:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.165:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.166:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.97.167:5206',
-            // 'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.172:5206',
+            'http://mSV6YJemvL:jqPxPczwth@45.10.210.81:5206',
+            'http://tVr7SpSb6L:7Ghj4j9an6@38.207.102.166:5206',
+            'http://mSV6YJemvL:jqPxPczwth@83.150.224.201:5206',
+            'http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.164:5206',
+            'http://mSV6YJemvL:jqPxPczwth@45.9.110.218:5206',
+            'http://tVr7SpSb6L:7Ghj4j9an6@38.207.100.185:5206',
+            'http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.176:5206',
+            'http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.169:5206',
+            'http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.163:5206',
+
         ];
 
         await searchService.init(proxies);
@@ -540,7 +506,7 @@ app.get('/google/search', async (req, res) => {
 
     } catch (error) {
         console.error('搜索请求处理失败:', error);
-        res.status(500).json({
+        res.status(600).json({
             error: '搜索请求失败: ' + error.message
         });
     }
