@@ -57,6 +57,8 @@ class WebScraper {
           "--no-first-run",
           "--no-zygote",
           "--disable-gpu",
+          "--disable-software-rasterizer", // 禁用软件光栅化
+          "--disable-web-security", // 禁用web安全（谨慎使用）
 
           `--fingerprint=${fingerprintSeed}`,
           "--timezone=Asia/Hong_Kong",
@@ -547,9 +549,9 @@ class WebScraper {
 
       await page.waitForSelector("#search", {
         timeout: timeout,
-        state: "visible",
+        state: "attached", // "visible",
       });
-      await page.waitForTimeout(100);
+      await page.waitForTimeout(50);
       console.log("search time:" + Math.floor(performance.now() - startTime));
 
       // 获取页面内容
