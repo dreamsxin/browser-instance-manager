@@ -45,6 +45,7 @@ class WebScraper {
     try {
       const fingerprintSeed = Math.floor(Math.random() * 100000);
       return await chromium.launch({
+        slowMo: 50,
         executablePath:
           process.env.BROWSER_PATH ||
           "E:\\soft\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\chrome.exe",
@@ -269,79 +270,57 @@ class WebScraper {
   }
 
   async setupPageRoute(page) {
-    const blockedDomains = new Set([
-      "gstatic.com",
-      "youtube.com",
-      "withgoogle.com",
-    ]);
-
-    const blockedPatterns = [
-      /google\.com\/(xjs|gen_|client_|log|async|maps|image)/,
-      /^blob:/,
-    ];
     await page.route("**/*", (route) => {
       const url = route.request().url();
 
-      // 快速域名检查
-      if (blockedDomains.has(new URL(url).hostname)) {
+      if (!url.includes("google.com")) {
         route.abort();
         return;
       }
-
-      // 模式匹配检查
-      if (blockedPatterns.some((pattern) => pattern.test(url))) {
+      if (url.includes("google.com/xjs/")) {
         route.abort();
         return;
       }
-
-      // if (!url.includes("google.com")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("google.com/xjs/")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("google.com/gen_")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("google.com/client_")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("google.com/log")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("google.com/async")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("google.com/maps")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("google.com/image")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("gstatic.com/")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("youtube.com/")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.includes("withgoogle.com")) {
-      //   route.abort();
-      //   return;
-      // }
-      // if (url.startsWith("blob:")) {
-      //   route.abort();
-      //   return;
-      // }
+      if (url.includes("google.com/gen_")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("google.com/client_")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("google.com/log")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("google.com/async")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("google.com/maps")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("google.com/image")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("gstatic.com/")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("youtube.com/")) {
+        route.abort();
+        return;
+      }
+      if (url.includes("withgoogle.com")) {
+        route.abort();
+        return;
+      }
+      if (url.startsWith("blob:")) {
+        route.abort();
+        return;
+      }
 
       const resourceType = route.request().resourceType();
       if (["image", "font", "media"].includes(resourceType)) {
