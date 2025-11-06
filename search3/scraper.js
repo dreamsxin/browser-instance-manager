@@ -125,23 +125,23 @@ class WebScraper {
       const proxyUrls = process.env.PROXY_LIST
         ? JSON.parse(process.env.PROXY_LIST)
         : [
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.182:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.182:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.163:5206",
-            "http://mSV6YJemvL:jqPxPczwth@45.10.210.104:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.166:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.167:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.183:5206",
-            "http://mSV6YJemvL:jqPxPczwth@45.9.110.208:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.190:5206",
-            "http://mSV6YJemvL:jqPxPczwth@45.142.76.235:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.104.173:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.163:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.165:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.166:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.97.167:5206",
-            "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.172:5206",
-          ];
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.182:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.182:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.163:5206",
+          "http://mSV6YJemvL:jqPxPczwth@45.10.210.104:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.166:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.167:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.183:5206",
+          "http://mSV6YJemvL:jqPxPczwth@45.9.110.208:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.190:5206",
+          "http://mSV6YJemvL:jqPxPczwth@45.142.76.235:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.104.173:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.163:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.165:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.166:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.97.167:5206",
+          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.172:5206",
+        ];
 
       const oldProxyUrl =
         proxyUrls[Math.floor(Math.random() * proxyUrls.length)];
@@ -183,7 +183,7 @@ class WebScraper {
     }
 
     // 清理使用次数过多的页面
-    await this.cleanupOverusedPages();
+    this.cleanupOverusedPages();
 
     // 查找可用页面
     const availablePage = this.pagePool.find(
@@ -236,34 +236,33 @@ class WebScraper {
         this.pageUsageCount.delete(pageObj.page);
         this.pageStatus.delete(pageObj.page);
         this.pagePool.splice(i, 1);
+      }
+    }
+    // 如果池中页面太少，创建新页面补充
+    const minPoolSize = Math.floor(this.initialPagePoolSize / 2);
+    if (
+      this.pagePool.length < minPoolSize &&
+      !this.browserRestartInProgress
+    ) {
+      const newPage = await this.createPageWithProxy(this.browser);
+      if (newPage) {
+        const newPageObj = {
+          page: newPage,
+          browser: this.browser,
+          lastUsed: Date.now(),
+          id: `page-${Date.now()}-${Math.random()
+            .toString(36)
+            .substr(2, 5)}`,
+        };
+        this.pagePool.push(newPageObj);
+        this.pageUsageCount.set(newPage, 0);
+        this.pageStatus.set(newPage, "available");
+        console.log("Added new page to pool");
 
-        // 如果池中页面太少，创建新页面补充
-        const minPoolSize = Math.floor(this.initialPagePoolSize / 2);
-        if (
-          this.pagePool.length < minPoolSize &&
-          !this.browserRestartInProgress
-        ) {
-          const newPage = await this.createPageWithProxy(this.browser);
-          if (newPage) {
-            const newPageObj = {
-              page: newPage,
-              browser: this.browser,
-              lastUsed: Date.now(),
-              id: `page-${Date.now()}-${Math.random()
-                .toString(36)
-                .substr(2, 5)}`,
-            };
-            this.pagePool.push(newPageObj);
-            this.pageUsageCount.set(newPage, 0);
-            this.pageStatus.set(newPage, "available");
-            console.log("Added new page to pool");
-
-            // 如果有等待的请求，立即分配新页面
-            if (this.waitingQueue.length > 0) {
-              const resolve = this.waitingQueue.shift();
-              resolve(newPageObj);
-            }
-          }
+        // 如果有等待的请求，立即分配新页面
+        if (this.waitingQueue.length > 0) {
+          const resolve = this.waitingQueue.shift();
+          resolve(newPageObj);
         }
       }
     }
@@ -351,9 +350,8 @@ class WebScraper {
     }
 
     console.log(
-      `Timeout reached, but ${
-        this.pagePool.filter((p) => this.pageStatus.get(p.page) === "in-use")
-          .length
+      `Timeout reached, but ${this.pagePool.filter((p) => this.pageStatus.get(p.page) === "in-use")
+        .length
       } pages are still in use`
     );
     return false;
@@ -488,8 +486,7 @@ class WebScraper {
       this.pageUsageCount.set(page, currentUsage + 1);
 
       console.log(
-        `Using page (used ${currentUsage + 1}/${
-          this.maxPageUsage
+        `Using page (used ${currentUsage + 1}/${this.maxPageUsage
         } times) for: ${word}`
       );
 
