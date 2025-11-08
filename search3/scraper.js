@@ -3,6 +3,7 @@ const { faker } = require("@faker-js/faker");
 const fs = require("fs");
 const ProxyChain = require("proxy-chain");
 const { performance } = require("perf_hooks");
+const path = require('path');
 
 class WebScraper {
   constructor(options = {}) {
@@ -21,6 +22,9 @@ class WebScraper {
     this.browser = null;
     this.isInitialized = false;
     this.requestCount = 0;
+
+    // 代理池
+    this.proxyPool = [];
 
     // 单个浏览器的页面池
     this.pagePool = [];
@@ -43,35 +47,43 @@ class WebScraper {
 
   async initBrowser() {
     try {
-      const fingerprintSeed = Math.floor(Math.random() * 100000);
+      const fingerprintSeed = 100000 + Math.floor(Math.random() * 100000);
+
+      const launchArgs = [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--disable-gpu",
+        "--disable-software-rasterizer", // 禁用软件光栅化
+        "--disable-web-security", // 禁用web安全（谨慎使用）
+
+        `--fingerprint=${fingerprintSeed}`,
+        "--timezone=Asia/Hong_Kong",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-features=VizDisplayCompositor",
+        "--disable-accelerated-2d-canvas",
+        "--disable-features=TranslateUI",
+        "--disable-ipc-flooding-protection",
+        "--enable-features=NetworkService,NetworkServiceInProcess",
+      ];
+      // const plugin_paths = [
+      //   "D:\\go\\src\\serp\\serp-node-browser\\search3\\extensions\\plugin",
+      // ];
+      // const pluginPaths = plugin_paths.map(p => path.resolve(p)).join(',');
+      // launchArgs.push(`--disable-extensions-except=${pluginPaths}`);
+      // launchArgs.push(`--load-extension=${pluginPaths}`);
       return await chromium.launch({
         slowMo: 50,
         executablePath:
           process.env.BROWSER_PATH ||
           "E:\\soft\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\chrome.exe",
         headless: process.env.HEADLESS === "true" || false,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
-          "--no-first-run",
-          "--no-zygote",
-          "--disable-gpu",
-          "--disable-software-rasterizer", // 禁用软件光栅化
-          "--disable-web-security", // 禁用web安全（谨慎使用）
-
-          `--fingerprint=${fingerprintSeed}`,
-          "--timezone=Asia/Hong_Kong",
-          "--disable-background-timer-throttling",
-          "--disable-backgrounding-occluded-windows",
-          "--disable-renderer-backgrounding",
-          "--disable-features=VizDisplayCompositor",
-          "--disable-accelerated-2d-canvas",
-          "--disable-features=TranslateUI",
-          "--disable-ipc-flooding-protection",
-          "--enable-features=NetworkService,NetworkServiceInProcess",
-        ],
+        args: launchArgs,
       });
     } catch (error) {
       console.error("Failed to initialize browser:", error);
@@ -81,6 +93,46 @@ class WebScraper {
 
   async initialize() {
     if (this.isInitialized) return;
+
+    const proxyUrls = process.env.PROXY_LIST
+      ? JSON.parse(process.env.PROXY_LIST)
+      : [
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.182:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.182:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.163:5206",
+        "http://mSV6YJemvL:jqPxPczwth@45.10.210.104:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.166:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.167:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.183:5206",
+        "http://mSV6YJemvL:jqPxPczwth@45.9.110.208:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.190:5206",
+        "http://mSV6YJemvL:jqPxPczwth@45.142.76.235:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.104.173:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.163:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.165:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.166:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.97.167:5206",
+        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.172:5206",
+
+        // 'http://wj034oOoBN:PjmashCzy1@154.196.159.70:5206',
+        // 'http://wnaK05Fn8a:YQAaCaMINP@154.196.156.144:5206',
+        // 'http://6EgeWDUCJY:zKqC5q81Pb@154.196.128.67:5206',
+        // 'http://Mmmdkiob7W:N3AbwaGiqi@154.196.152.123:5206',
+        // 'http://1VGEhzGEmd:TvtEABk6UK@154.196.158.237:5206',
+        // 'http://4m080Sefbh:kVLgTjfakC@154.196.154.50:5206',
+        // 'http://0n0NjOp6Fl:31HoNDPGnA@154.196.157.228:5206',
+        // 'http://wj034oOoBN:PjmashCzy1@154.196.159.254:5206',
+        // 'http://0n0NjOp6Fl:31HoNDPGnA@154.196.157.61:5206',
+        // 'http://4m080Sefbh:kVLgTjfakC@154.196.154.124:5206',
+        // 'http://1VGEhzGEmd:TvtEABk6UK@154.196.158.93:5206',
+        // 'http://Mmmdkiob7W:N3AbwaGiqi@154.196.152.30:5206'
+      ];
+
+    for (let i = 0; i < proxyUrls.length; i++) {
+      const oldProxyUrl = proxyUrls[i];
+      const newProxyUrl = await ProxyChain.anonymizeProxy(oldProxyUrl);
+      this.proxyPool.push(newProxyUrl);
+    }
 
     try {
       this.browser = await this.initBrowser();
@@ -122,30 +174,8 @@ class WebScraper {
     let page = null;
 
     try {
-      const proxyUrls = process.env.PROXY_LIST
-        ? JSON.parse(process.env.PROXY_LIST)
-        : [
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.182:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.182:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.163:5206",
-          "http://mSV6YJemvL:jqPxPczwth@45.10.210.104:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.166:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.167:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.183:5206",
-          "http://mSV6YJemvL:jqPxPczwth@45.9.110.208:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.190:5206",
-          "http://mSV6YJemvL:jqPxPczwth@45.142.76.235:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.104.173:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.163:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.165:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.166:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.97.167:5206",
-          "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.172:5206",
-        ];
-
-      const oldProxyUrl =
-        proxyUrls[Math.floor(Math.random() * proxyUrls.length)];
-      const newProxyUrl = await ProxyChain.anonymizeProxy(oldProxyUrl);
+      
+      const newProxyUrl = this.proxyPool[Math.floor(Math.random() * this.proxyPool)];
 
       context = await browser.newContext({
         viewport: null,
@@ -276,6 +306,10 @@ class WebScraper {
         route.abort();
         return;
       }
+      // if (url.includes("google.com/shared_dict/")) {
+      //   route.abort();
+      //   return;
+      // }
       if (url.includes("google.com/xjs/")) {
         route.abort();
         return;

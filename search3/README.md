@@ -206,3 +206,7 @@ export MAX_REQUESTS_BEFORE_RESTART=800
 export INITIAL_PAGE_POOL_SIZE=8
 node server.js --max-page-usage=25 --max-concurrent=40
 ```
+
+```shell
+curl -o /dev/null -s -w "DNS解析: %{time_namelookup}s\n建立连接: %{time_connect}s\nSSL握手: %{time_appconnect}s\n准备传输: %{time_pretransfer}s\n开始传输: %{time_starttransfer}s\n总时间: %{time_total}s\n" 
+```
