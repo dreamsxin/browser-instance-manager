@@ -33,11 +33,16 @@ class WebScraper {
     // 等待队列和页面状态管理
     this.waitingQueue = [];
     this.pageStatus = new Map(); // 记录页面状态: 'available', 'in-use', 'retiring'
+    this.pageProxy = new Map(); // 页面对应的代理
     this.browserRestartInProgress = false;
 
     // 重启期间的请求队列
     this.restartQueue = [];
     this.restartPromise = null;
+
+    // 添加清理锁
+    this.cleanupInProgress = false;
+    this.cleanupPromise = null;
 
     console.log(`WebScraper initialized with:
   - maxRequestsBeforeRestart: ${this.maxRequestsBeforeRestart}
@@ -172,10 +177,15 @@ class WebScraper {
   async createPageWithProxy(browser) {
     let context = null;
     let page = null;
+    let newProxyUrl = null;
 
     try {
-      
-      const newProxyUrl = this.proxyPool[Math.floor(Math.random() * this.proxyPool)];
+
+      newProxyUrl = this.proxyPool.pop();
+      if (!newProxyUrl) {
+        console.error("No available proxy to create page with");
+        return null;
+      }
 
       context = await browser.newContext({
         viewport: null,
@@ -193,11 +203,15 @@ class WebScraper {
 
       console.log(`Page initialization status: ${response?.status()}`);
 
+      this.pageProxy.set(page, newProxyUrl);
       return page;
     } catch (error) {
       console.error("Failed to create page with proxy:", error);
       if (page) await page.close().catch(console.error);
       if (context) await context.close().catch(console.error);
+      if (newProxyUrl) {
+        this.proxyPool.push(newProxyUrl);
+      }
       return null;
     }
   }
@@ -255,46 +269,79 @@ class WebScraper {
   }
 
   async cleanupOverusedPages() {
-    // 清理页面池
-    for (let i = this.pagePool.length - 1; i >= 0; i--) {
-      const pageObj = this.pagePool[i];
-      const pageStatus = this.pageStatus.get(pageObj.page);
-
-      if (pageStatus === "retiring") {
-        console.log(`Closing retired page`);
-        await pageObj.page.close().catch(console.error);
-        this.pageUsageCount.delete(pageObj.page);
-        this.pageStatus.delete(pageObj.page);
-        this.pagePool.splice(i, 1);
-      }
+    // 如果浏览器正在重启，跳过清理操作
+    if (this.browserRestartInProgress) {
+      console.log("Browser restart in progress, skipping cleanup");
+      return;
     }
-    // 如果池中页面太少，创建新页面补充
-    const minPoolSize = Math.floor(this.initialPagePoolSize / 2);
-    if (
-      this.pagePool.length < minPoolSize &&
-      !this.browserRestartInProgress
-    ) {
-      const newPage = await this.createPageWithProxy(this.browser);
-      if (newPage) {
-        const newPageObj = {
-          page: newPage,
-          browser: this.browser,
-          lastUsed: Date.now(),
-          id: `page-${Date.now()}-${Math.random()
-            .toString(36)
-            .substr(2, 5)}`,
-        };
-        this.pagePool.push(newPageObj);
-        this.pageUsageCount.set(newPage, 0);
-        this.pageStatus.set(newPage, "available");
-        console.log("Added new page to pool");
 
-        // 如果有等待的请求，立即分配新页面
-        if (this.waitingQueue.length > 0) {
-          const resolve = this.waitingQueue.shift();
-          resolve(newPageObj);
+    // 如果清理已在进行中，等待当前清理完成
+    if (this.cleanupInProgress) {
+      console.log("Cleanup already in progress, waiting...");
+      return this.cleanupPromise;
+    }
+
+    // 设置清理锁
+    this.cleanupInProgress = true;
+    this.cleanupPromise = this.performCleanup();
+
+    try {
+      await this.cleanupPromise;
+    } finally {
+      this.cleanupInProgress = false;
+      this.cleanupPromise = null;
+    }
+  }
+
+  async performCleanup() {
+    try {
+      // 清理页面池
+      for (let i = this.pagePool.length - 1; i >= 0; i--) {
+        const pageObj = this.pagePool[i];
+        const pageStatus = this.pageStatus.get(pageObj.page);
+
+        if (pageStatus === "retiring") {
+          const newProxyUrl = this.pageProxy.get(pageObj.page);
+          if (newProxyUrl) {
+            this.proxyPool.push(newProxyUrl);
+          }
+          console.log(`Closing retired page`);
+
+          // 安全关闭页面
+          try {
+            await pageObj.page.close();
+          } catch (error) {
+            console.error("Error closing page during cleanup:", error);
+          }
+
+          this.pageUsageCount.delete(pageObj.page);
+          this.pageStatus.delete(pageObj.page);
+          this.pagePool.splice(i, 1);
+          const newPage = await this.createPageWithProxy(this.browser);
+          if (newPage) {
+            const newPageObj = {
+              page: newPage,
+              browser: this.browser,
+              lastUsed: Date.now(),
+              id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+            };
+            this.pagePool.push(newPageObj);
+            this.pageUsageCount.set(newPage, 0);
+            this.pageStatus.set(newPage, "available");
+            console.log("Added new page to pool");
+
+            // 如果有等待的请求，立即分配新页面
+            if (this.waitingQueue.length > 0) {
+              const resolve = this.waitingQueue.shift();
+              resolve(newPageObj);
+            }
+          }
         }
       }
+
+    } catch (error) {
+      console.error("Cleanup failed:", error);
+      throw error;
     }
   }
 
@@ -398,30 +445,41 @@ class WebScraper {
       return this.restartPromise;
     }
 
+    // 等待清理操作完成
+    if (this.cleanupInProgress) {
+      console.log("Waiting for cleanup to complete before restart...");
+      await this.cleanupPromise;
+    }
+
     this.browserRestartInProgress = true;
     console.log(`Starting browser restart...`);
 
     // 创建重启Promise
     this.restartPromise = new Promise(async (resolve, reject) => {
       try {
-        console.log(
-          `Waiting for all pages to complete current tasks before restart...`
-        );
+        console.log(`Waiting for all pages to complete current tasks before restart...`);
 
         // 等待所有页面完成当前任务
         const allCompleted = await this.waitForAllPagesToComplete();
 
         if (!allCompleted) {
-          console.log(
-            "Some pages did not complete in time, proceeding with restart anyway"
-          );
+          console.log("Some pages did not complete in time, proceeding with restart anyway");
         }
 
         console.log(`Restarting browser...`);
 
-        // 关闭所有页面
+        // 安全关闭所有页面
         for (const pageObj of this.pagePool) {
-          await pageObj.page.close().catch(console.error);
+          try {
+            const newProxyUrl = this.pageProxy.get(pageObj.page);
+            if (newProxyUrl) {
+              this.proxyPool.push(newProxyUrl);
+            }
+            await pageObj.page.close();
+          } catch (error) {
+            console.error("Error closing page during restart:", error);
+          }
+
           this.pageUsageCount.delete(pageObj.page);
           this.pageStatus.delete(pageObj.page);
         }
@@ -504,7 +562,7 @@ class WebScraper {
     }
 
     // 检查是否需要重启（这会在后台触发重启）
-    await this.checkAndRestartBrowser();
+    this.checkAndRestartBrowser();
 
     const { timeout = 2000, waitUntil = "commit" } = options;
 
@@ -513,6 +571,16 @@ class WebScraper {
     try {
       // 从页面池获取可用页面（可能会等待）
       pageObj = await this.getAvailablePage();
+      
+      if (this.browserRestartInProgress) {
+        // 如果刚获取到页面但浏览器开始重启，释放页面并等待重启完成
+        this.releasePage(pageObj);
+        if (this.restartPromise) {
+          await this.restartPromise;
+        }
+        // 重新获取页面
+        pageObj = await this.getAvailablePage();
+      }
       const page = pageObj.page;
 
       // 增加页面使用计数
