@@ -29,6 +29,9 @@ class WebScraper {
     // 单个浏览器的页面池
     this.pagePool = [];
     this.pageUsageCount = new Map();
+    
+    // 页面空闲时间跟踪
+    this.pageIdleStartTime = new Map();
 
     // 等待队列和页面状态管理
     this.waitingQueue = [];
@@ -162,11 +165,13 @@ class WebScraper {
           page,
           browser: this.browser,
           lastUsed: Date.now(),
+          idleStartTime: Date.now(), // 初始化空闲开始时间
           id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
         };
         this.pagePool.push(pageObj);
         this.pageUsageCount.set(page, 0);
         this.pageStatus.set(page, "available");
+        this.pageIdleStartTime.set(page, Date.now()); // 记录空闲开始时间
       }
     }
     console.log(
@@ -216,7 +221,7 @@ class WebScraper {
     }
   }
 
-  // 获取可用页面的方法，支持等待队列
+  // 获取可用页面的方法，优先选择最长空闲的页面
   async getAvailablePage() {
     // 如果浏览器正在重启，等待重启完成
     if (this.browserRestartInProgress) {
@@ -229,15 +234,27 @@ class WebScraper {
     // 清理使用次数过多的页面
     this.cleanupOverusedPages();
 
-    // 查找可用页面
-    const availablePage = this.pagePool.find(
+    // 查找所有可用页面
+    const availablePages = this.pagePool.filter(
       (p) => this.pageStatus.get(p.page) === "available"
     );
 
-    if (availablePage) {
-      this.pageStatus.set(availablePage.page, "in-use");
-      availablePage.lastUsed = Date.now();
-      return availablePage;
+    if (availablePages.length > 0) {
+      // 按空闲时间排序，选择空闲时间最长的页面
+      const sortedPages = availablePages.sort((a, b) => {
+        const aIdleTime = this.pageIdleStartTime.get(a.page) || 0;
+        const bIdleTime = this.pageIdleStartTime.get(b.page) || 0;
+        return aIdleTime - bIdleTime; // 空闲开始时间越早，空闲时间越长
+      });
+
+      const longestIdlePage = sortedPages[0];
+      this.pageStatus.set(longestIdlePage.page, "in-use");
+      longestIdlePage.lastUsed = Date.now();
+      // 移除空闲时间记录，因为页面现在被使用了
+      this.pageIdleStartTime.delete(longestIdlePage.page);
+      
+      console.log(`Selected page with longest idle time: ${longestIdlePage.id}`);
+      return longestIdlePage;
     }
 
     // 如果没有可用页面，等待直到有页面可用
@@ -256,9 +273,10 @@ class WebScraper {
       this.pageStatus.set(pageObj.page, "retiring");
       console.log(`Page marked for retirement (used ${usageCount} times)`);
     } else {
-      // 重置页面状态为可用
+      // 重置页面状态为可用，并记录空闲开始时间
       this.pageStatus.set(pageObj.page, "available");
       pageObj.lastUsed = Date.now();
+      this.pageIdleStartTime.set(pageObj.page, Date.now());
 
       // 检查是否有等待的请求
       if (this.waitingQueue.length > 0) {
@@ -316,6 +334,7 @@ class WebScraper {
 
           this.pageUsageCount.delete(pageObj.page);
           this.pageStatus.delete(pageObj.page);
+          this.pageIdleStartTime.delete(pageObj.page);
           this.pagePool.splice(i, 1);
           const newPage = await this.createPageWithProxy(this.browser);
           if (newPage) {
@@ -323,11 +342,13 @@ class WebScraper {
               page: newPage,
               browser: this.browser,
               lastUsed: Date.now(),
+              idleStartTime: Date.now(),
               id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
             };
             this.pagePool.push(newPageObj);
             this.pageUsageCount.set(newPage, 0);
             this.pageStatus.set(newPage, "available");
+            this.pageIdleStartTime.set(newPage, Date.now());
             console.log("Added new page to pool");
 
             // 如果有等待的请求，立即分配新页面
@@ -482,6 +503,7 @@ class WebScraper {
 
           this.pageUsageCount.delete(pageObj.page);
           this.pageStatus.delete(pageObj.page);
+          this.pageIdleStartTime.delete(pageObj.page);
         }
         this.pagePool.length = 0;
 
@@ -710,6 +732,7 @@ class WebScraper {
     this.pagePool = [];
     this.pageUsageCount.clear();
     this.pageStatus.clear();
+    this.pageIdleStartTime.clear();
 
     if (this.browser) {
       await this.browser.close();
