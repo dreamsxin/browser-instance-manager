@@ -123,7 +123,7 @@ class WebScraper {
 
   async initializePagePool() {
     // 使用配置的页面池大小创建页面
-    for (let i = 0; i < this.initialPagePoolSize; i++) {
+    while (this.pagePool.length < this.initialPagePoolSize) {
       const page = await this.createPageWithProxy(this.browser);
       if (page) {
         const pageObj = {
@@ -137,6 +137,8 @@ class WebScraper {
         this.pageUsageCount.set(page, 0);
         this.pageStatus.set(page, "available");
         this.pageIdleStartTime.set(page, Date.now()); // 记录空闲开始时间
+      } else {
+        console.error(`Failed to create page ${i}`);
       }
     }
     console.log(
