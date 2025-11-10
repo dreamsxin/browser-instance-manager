@@ -20,7 +20,8 @@
     "helmet": "^7.1.0",
     "p-limit": "^7.2.0",
     "playwright": "^1.40.0",
-    "proxy-chain": "^2.5.9"
+    "proxy-chain": "^2.5.9",
+    "redis": "^5.9.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

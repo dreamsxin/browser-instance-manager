@@ -4,9 +4,17 @@ const fs = require("fs");
 const ProxyChain = require("proxy-chain");
 const { performance } = require("perf_hooks");
 const path = require('path');
+const RedisSortedSet = require('./redis-sorted-set'); // 根据实际路径调整
 
 class WebScraper {
   constructor(options = {}) {
+    this.redisSortedSet = new RedisSortedSet({
+      url: process.env.REDIS_URL || 'redis://192.168.0.80:6379',
+      password: process.env.REDIS_PASSWORD || "123456",
+      database: process.env.REDIS_DATABASE || "11"
+    });
+    this.proxyQueueKey = 'nodejs:browser:proxy_queue';
+
     // 从选项或命令行参数获取配置
     this.maxRequestsBeforeRestart =
       options.maxRequestsBeforeRestart ||
@@ -23,13 +31,10 @@ class WebScraper {
     this.isInitialized = false;
     this.requestCount = 0;
 
-    // 代理池
-    this.proxyPool = [];
-
     // 单个浏览器的页面池
     this.pagePool = [];
     this.pageUsageCount = new Map();
-    
+
     // 页面空闲时间跟踪
     this.pageIdleStartTime = new Map();
 
@@ -102,47 +107,8 @@ class WebScraper {
   async initialize() {
     if (this.isInitialized) return;
 
-    const proxyUrls = process.env.PROXY_LIST
-      ? JSON.parse(process.env.PROXY_LIST)
-      : [
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.182:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.103.182:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.163:5206",
-        "http://mSV6YJemvL:jqPxPczwth@45.10.210.104:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.166:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.167:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.183:5206",
-        "http://mSV6YJemvL:jqPxPczwth@45.9.110.208:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.190:5206",
-        "http://mSV6YJemvL:jqPxPczwth@45.142.76.235:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.104.173:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.98.163:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.101.165:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.166:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.97.167:5206",
-        "http://tVr7SpSb6L:7Ghj4j9an6@38.207.99.172:5206",
-
-        // 'http://wj034oOoBN:PjmashCzy1@154.196.159.70:5206',
-        // 'http://wnaK05Fn8a:YQAaCaMINP@154.196.156.144:5206',
-        // 'http://6EgeWDUCJY:zKqC5q81Pb@154.196.128.67:5206',
-        // 'http://Mmmdkiob7W:N3AbwaGiqi@154.196.152.123:5206',
-        // 'http://1VGEhzGEmd:TvtEABk6UK@154.196.158.237:5206',
-        // 'http://4m080Sefbh:kVLgTjfakC@154.196.154.50:5206',
-        // 'http://0n0NjOp6Fl:31HoNDPGnA@154.196.157.228:5206',
-        // 'http://wj034oOoBN:PjmashCzy1@154.196.159.254:5206',
-        // 'http://0n0NjOp6Fl:31HoNDPGnA@154.196.157.61:5206',
-        // 'http://4m080Sefbh:kVLgTjfakC@154.196.154.124:5206',
-        // 'http://1VGEhzGEmd:TvtEABk6UK@154.196.158.93:5206',
-        // 'http://Mmmdkiob7W:N3AbwaGiqi@154.196.152.30:5206'
-      ];
-
-    for (let i = 0; i < proxyUrls.length; i++) {
-      const oldProxyUrl = proxyUrls[i];
-      const newProxyUrl = await ProxyChain.anonymizeProxy(oldProxyUrl);
-      this.proxyPool.push(newProxyUrl);
-    }
-
     try {
+      await this.redisSortedSet.connect();
       this.browser = await this.initBrowser();
 
       // 初始化页面池
@@ -185,13 +151,10 @@ class WebScraper {
     let newProxyUrl = null;
 
     try {
-
-      newProxyUrl = this.proxyPool.pop();
-      if (!newProxyUrl) {
-        console.error("No available proxy to create page with");
-        return null;
-      }
-
+      const proxyUrl = await this.redisSortedSet.popMinAndIncrement(this.proxyQueueKey);
+      const newProxyUrl = await ProxyChain.anonymizeProxy(proxyUrl.member);
+      console.log("Anonymized proxy:", proxyUrl.member, newProxyUrl);
+     
       context = await browser.newContext({
         viewport: null,
         proxy: newProxyUrl ? { server: newProxyUrl } : undefined,
@@ -215,7 +178,7 @@ class WebScraper {
       if (page) await page.close().catch(console.error);
       if (context) await context.close().catch(console.error);
       if (newProxyUrl) {
-        this.proxyPool.push(newProxyUrl);
+        ProxyChain.closeAnonymizedProxy(newProxyUrl);
       }
       return null;
     }
@@ -252,7 +215,7 @@ class WebScraper {
       longestIdlePage.lastUsed = Date.now();
       // 移除空闲时间记录，因为页面现在被使用了
       this.pageIdleStartTime.delete(longestIdlePage.page);
-      
+
       console.log(`Selected page with longest idle time: ${longestIdlePage.id}`);
       return longestIdlePage;
     }
@@ -321,7 +284,8 @@ class WebScraper {
         if (pageStatus === "retiring") {
           const newProxyUrl = this.pageProxy.get(pageObj.page);
           if (newProxyUrl) {
-            this.proxyPool.push(newProxyUrl);
+            ProxyChain.closeAnonymizedProxy(newProxyUrl);
+            this.pageProxy.delete(pageObj.page);
           }
           console.log(`Closing retired page`);
 
@@ -494,7 +458,8 @@ class WebScraper {
           try {
             const newProxyUrl = this.pageProxy.get(pageObj.page);
             if (newProxyUrl) {
-              this.proxyPool.push(newProxyUrl);
+              ProxyChain.closeAnonymizedProxy(newProxyUrl);
+              this.pageProxy.delete(pageObj.page);
             }
             await pageObj.page.close();
           } catch (error) {
@@ -593,7 +558,7 @@ class WebScraper {
     try {
       // 从页面池获取可用页面（可能会等待）
       pageObj = await this.getAvailablePage();
-      
+
       if (this.browserRestartInProgress) {
         // 如果刚获取到页面但浏览器开始重启，释放页面并等待重启完成
         this.releasePage(pageObj);
