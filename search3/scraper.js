@@ -9,9 +9,9 @@ const RedisSortedSet = require('./redis-sorted-set'); // 根据实际路径调�
 class WebScraper {
   constructor(options = {}) {
     this.redisSortedSet = new RedisSortedSet({
-      url: options.redisUrl || process.env.REDIS_URL || 'redis://192.168.0.80:6379',
-      password: options.redisPassword || process.env.REDIS_PASSWORD || "123456",
-      database: options.redisDatabase || process.env.REDIS_DATABASE || "11"
+      url: options.redisUrl || process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+      password: options.redisPassword || process.env.REDIS_PASSWORD || undefined,
+      database: options.redisDatabase || process.env.REDIS_DATABASE || undefined
     });
     this.proxyQueueKey = 'nodejs:browser:proxy_queue';
 
@@ -93,8 +93,7 @@ class WebScraper {
       return await chromium.launch({
         slowMo: 50,
         executablePath:
-          process.env.BROWSER_PATH ||
-          "E:\\soft\\ungoogled-chromium_138.0.7204.183-1.1_windows_x64\\chrome.exe",
+          process.env.BROWSER_PATH,
         headless: process.env.HEADLESS === "true" || false,
         args: launchArgs,
       });

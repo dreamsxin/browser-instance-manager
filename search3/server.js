@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -18,11 +19,11 @@ class ScrapingServer {
     const maxConcurrent = parseInt(process.argv.find(arg => arg.startsWith('--max-concurrent='))?.split('=')[1]) || 
                          parseInt(process.env.MAX_CONCURRENT) || 35;
     const redisUrl = process.argv.find(arg => arg.startsWith('--redis-url='))?.split('=')[1] || 
-                     process.env.REDIS_URL || 'redis://192.168.0.80:6379';
+                     process.env.REDIS_URL || 'redis://127.0.0.1:6379';
     const redisPassword = process.argv.find(arg => arg.startsWith('--redis-password='))?.split('=')[1] || 
-                         process.env.REDIS_PASSWORD || "123456";
+                         process.env.REDIS_PASSWORD || undefined;
     const redisDatabase = process.argv.find(arg => arg.startsWith('--redis-database='))?.split('=')[1] || 
-                         process.env.REDIS_DATABASE || "11";
+                         process.env.REDIS_DATABASE || undefined;
     
     // 创建 scraper 实例并传入配置
     this.scraper = new WebScraper({
