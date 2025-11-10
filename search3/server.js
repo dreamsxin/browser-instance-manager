@@ -17,12 +17,21 @@ class ScrapingServer {
                                parseInt(process.env.INITIAL_PAGE_POOL_SIZE) || 5;
     const maxConcurrent = parseInt(process.argv.find(arg => arg.startsWith('--max-concurrent='))?.split('=')[1]) || 
                          parseInt(process.env.MAX_CONCURRENT) || 35;
+    const redisUrl = process.argv.find(arg => arg.startsWith('--redis-url='))?.split('=')[1] || 
+                     process.env.REDIS_URL || 'redis://192.168.0.80:6379';
+    const redisPassword = process.argv.find(arg => arg.startsWith('--redis-password='))?.split('=')[1] || 
+                         process.env.REDIS_PASSWORD || "123456";
+    const redisDatabase = process.argv.find(arg => arg.startsWith('--redis-database='))?.split('=')[1] || 
+                         process.env.REDIS_DATABASE || "11";
     
     // 创建 scraper 实例并传入配置
     this.scraper = new WebScraper({
       maxRequestsBeforeRestart,
       maxPageUsage,
-      initialPagePoolSize
+      initialPagePoolSize,
+      redisUrl,
+      redisPassword,
+      redisDatabase,
     });
     
     this.concurrencyController = new ConcurrencyController(maxConcurrent);
