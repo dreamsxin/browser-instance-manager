@@ -137,6 +137,11 @@ class WebScraper {
         this.pageUsageCount.set(page, 0);
         this.pageStatus.set(page, "available");
         this.pageIdleStartTime.set(page, Date.now()); // 记录空闲开始时间
+        // 如果有等待的请求，立即分配新页面
+        if (this.waitingQueue.length > 0) {
+          const resolve = this.waitingQueue.shift();
+          resolve(pageObj);
+        }
       } else {
         console.error(`Failed to create page ${i}`);
       }
@@ -155,7 +160,7 @@ class WebScraper {
       const proxyUrl = await this.redisSortedSet.popMinAndIncrement(this.proxyQueueKey);
       const newProxyUrl = await ProxyChain.anonymizeProxy(proxyUrl.member);
       console.log("Anonymized proxy:", proxyUrl.member, newProxyUrl);
-     
+
       context = await browser.newContext({
         viewport: null,
         proxy: newProxyUrl ? { server: newProxyUrl } : undefined,
@@ -670,7 +675,38 @@ class WebScraper {
       };
     } catch (error) {
       console.error(`Scraping failed for ${word}:`, error.message);
+      // 安全关闭页面
+      try {
+        await pageObj.page.close();
+      } catch (error) {
+        console.error("Error closing page during cleanup:", error);
+      }
 
+      this.pageUsageCount.delete(pageObj.page);
+      this.pageStatus.delete(pageObj.page);
+      this.pageIdleStartTime.delete(pageObj.page);
+      this.pagePool.splice(i, 1);
+      const newPage = await this.createPageWithProxy(this.browser);
+      if (newPage) {
+        const newPageObj = {
+          page: newPage,
+          browser: this.browser,
+          lastUsed: Date.now(),
+          idleStartTime: Date.now(),
+          id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        };
+        this.pagePool.push(newPageObj);
+        this.pageUsageCount.set(newPage, 0);
+        this.pageStatus.set(newPage, "available");
+        this.pageIdleStartTime.set(newPage, Date.now());
+        console.log("Added new page to pool");
+
+        // 如果有等待的请求，立即分配新页面
+        if (this.waitingQueue.length > 0) {
+          const resolve = this.waitingQueue.shift();
+          resolve(newPageObj);
+        }
+      }
       return {
         success: false,
         word: word,
