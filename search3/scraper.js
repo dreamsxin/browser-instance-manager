@@ -122,8 +122,10 @@ class WebScraper {
   }
 
   async initializePagePool() {
+    console.log(`Initializing page pool with size: ${this.initialPagePoolSize}`);
     // 使用配置的页面池大小创建页面
     while (this.pagePool.length < this.initialPagePoolSize) {
+      console.log(`Initializing page ${this.pagePool.length + 1} of ${this.initialPagePoolSize}`);
       const page = await this.createPageWithProxy(this.browser);
       if (page) {
         const pageObj = {
