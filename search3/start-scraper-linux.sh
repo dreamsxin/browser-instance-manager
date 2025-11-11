@@ -17,7 +17,7 @@ echo "虚拟显示: DISPLAY=:99"
 
 # 启动 scraper
 cd "$(dirname "$0")"
-node service.js
+node server.js
 
 # 清理
 echo "停止 Xvfb..."
